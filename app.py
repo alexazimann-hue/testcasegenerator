@@ -28,23 +28,53 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ── MODÈLES DISPONIBLES (free tier) ──────────────────────────────────────────
+MODELS = {
+    "gemini-2.5-flash-lite-preview-06-17": "⚡ Gemini 2.5 Flash Lite  (RPD: 9/20 restants)",
+    "gemini-2.0-flash":                    "🔵 Gemini 2.0 Flash       (RPD: 0/0 — intact)",
+    "gemini-2.0-flash-exp":                "🧪 Gemini 2.0 Flash Exp   (RPD: 0/0 — intact)",
+    "gemini-2.0-flash-lite":               "💨 Gemini 2.0 Flash Lite  (RPD: 0/0 — intact)",
+    "gemini-2.5-flash":                    "✨ Gemini 2.5 Flash       (RPD: 20/20 — épuisé)",
+    "gemini-2.5-pro":                      "🏆 Gemini 2.5 Pro        (RPD: 0/0 — intact)",
+    "gemma-3-1b-it":                       "🟢 Gemma 3 1B            (RPD: 1/14.4K — intact)",
+    "gemma-3-4b-it":                       "🟢 Gemma 3 4B            (RPD: 0/14.4K — intact)",
+    "gemma-3-12b-it":                      "🟢 Gemma 3 12B           (RPD: 0/14.4K — intact)",
+    "gemma-3-27b-it":                      "🟢 Gemma 3 27B           (RPD: 0/14.4K — intact)",
+}
+
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("⚙️ Configuration")
     api_key = st.text_input("Clé API Gemini", type="password",
                              help="Obtenez votre clé sur https://aistudio.google.com/")
-    model_choice = st.selectbox("Modèle Gemini", [
-        "gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"
-    ])
+
+    model_choice = st.selectbox(
+        "Modèle",
+        options=list(MODELS.keys()),
+        format_func=lambda x: MODELS[x],
+        index=0,
+        help="Choisissez un modèle avec du quota disponible."
+    )
+
+    st.divider()
+    st.markdown("""
+### 💡 Quota free tier (RPD = requêtes/jour)
+| Modèle | RPD |
+|--------|-----|
+| Gemini 2.5 Flash Lite | 20/j |
+| Gemini 2.0 Flash | 200/j |
+| Gemini 2.5 Pro | 25/j |
+| Gemma 3 (tous) | 14 400/j |
+
+⚠️ Gemini 2.5 Flash : quota épuisé aujourd'hui.  
+✅ Recommandé maintenant : **Gemini 2.5 Flash Lite** ou **Gemini 2.0 Flash**.
+""")
     st.divider()
     st.markdown("""
 ### 🗺️ Comment ça marche
-1. **Phase 1** – Soumettez votre US  
-   L'IA pose des questions → répondez → validez  
-2. **Phase 2** – Plan de test  
-   L'IA liste les scénarios → modifiez → validez  
-3. **Phase 3** – Cas détaillés  
-   L'IA rédige tout → exportez
+1. **Phase 1** – Soumettez votre US → l'IA pose des questions → répondez → validez
+2. **Phase 2** – L'IA liste les scénarios → modifiez → validez
+3. **Phase 3** – L'IA rédige tout → exportez
 """)
     st.divider()
     if st.button("🔄 Nouvelle session", use_container_width=True):
@@ -148,30 +178,24 @@ FORMAT OBLIGATOIRE pour chaque cas :
 
 CONTRAINTES : résultats attendus vérifiables, ne jamais inventer de règle métier."""
 
-# ── APPEL GEMINI (nouveau SDK google-genai) ────────────────────────────────────
+# ── APPEL GEMINI ──────────────────────────────────────────────────────────────
 def call_gemini(history, system_prompt, user_message, image=None):
     client = genai.Client(api_key=api_key)
-
     contents = []
     for m in history:
         role = "user" if m["role"] == "user" else "model"
         contents.append(types.Content(role=role, parts=[types.Part(text=m["content"])]))
-
-    # Message utilisateur courant
     parts = [types.Part(text=user_message)]
     if image:
         buf = io.BytesIO()
         image.save(buf, format="PNG")
         parts.append(types.Part.from_bytes(data=buf.getvalue(), mime_type="image/png"))
-
     contents.append(types.Content(role="user", parts=parts))
-
     config = types.GenerateContentConfig(
         system_instruction=system_prompt,
         max_output_tokens=4000,
         temperature=0.25,
     )
-
     response = client.models.generate_content(
         model=model_choice,
         contents=contents,
@@ -230,7 +254,7 @@ if st.session_state.phase == 1:
                 prompt = f"Voici la User Story à analyser :\n\n{us_input}"
                 if uploaded:
                     prompt += "\n\n[Une image de maquette a été fournie, analyse-la également.]"
-                with st.spinner("🔍 Analyse en cours…"):
+                with st.spinner(f"🔍 Analyse en cours avec {MODELS[model_choice].split('(')[0].strip()}…"):
                     try:
                         response = call_gemini([], PROMPT_P1, prompt, image_pil)
                         st.session_state.us_text = us_input
@@ -242,7 +266,11 @@ if st.session_state.phase == 1:
                         st.session_state.us_submitted = True
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Erreur Gemini : {str(e)}")
+                        err = str(e)
+                        if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                            st.error("⚠️ Quota épuisé pour ce modèle. Changez de modèle dans la barre latérale (ex: Gemini 2.5 Flash Lite ou Gemini 2.0 Flash).")
+                        else:
+                            st.error(f"Erreur Gemini : {err}")
     else:
         render_chat(st.session_state.p1_msgs)
         reply = st.text_area("💬 Répondez aux questions de clarification :", height=120, key="p1_reply")
@@ -258,7 +286,11 @@ if st.session_state.phase == 1:
                             st.session_state.p1_context += f"\n\nQ: {reply}\nR: {response}"
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Erreur : {str(e)}")
+                            err = str(e)
+                            if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                                st.error("⚠️ Quota épuisé. Changez de modèle dans la barre latérale.")
+                            else:
+                                st.error(f"Erreur : {err}")
         with c2:
             if st.button("✅ Valider l'analyse → Phase 2", type="primary", use_container_width=True):
                 context_msg = f"Contexte validé :\n\n{st.session_state.p1_context}\n\nGénère le plan de test (titres uniquement)."
@@ -274,7 +306,11 @@ if st.session_state.phase == 1:
                         st.session_state.phase = 2
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Erreur : {str(e)}")
+                        err = str(e)
+                        if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                            st.error("⚠️ Quota épuisé. Changez de modèle dans la barre latérale.")
+                        else:
+                            st.error(f"Erreur : {err}")
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  PHASE 2
@@ -282,7 +318,6 @@ if st.session_state.phase == 1:
 elif st.session_state.phase == 2:
     st.markdown('<div class="phase-badge phase-2">📋 Phase 2 — QA Lead : Plan de Test</div>', unsafe_allow_html=True)
     render_chat(st.session_state.p2_msgs)
-
     reply2 = st.text_area("💬 Demandez des modifications au plan :", height=100, key="p2_reply")
     c1, c2 = st.columns(2)
     with c1:
@@ -296,7 +331,11 @@ elif st.session_state.phase == 2:
                         st.session_state.p2_draft = response
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Erreur : {str(e)}")
+                        err = str(e)
+                        if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                            st.error("⚠️ Quota épuisé. Changez de modèle dans la barre latérale.")
+                        else:
+                            st.error(f"Erreur : {err}")
     with c2:
         if st.button("✅ Valider le plan → Phase 3", type="primary", use_container_width=True):
             plan_msg = f"Plan validé :\n\n{st.session_state.p2_draft}\n\nContexte US :\n{st.session_state.p1_context}\n\nGénère les cas de tests COMPLETS et DÉTAILLÉS."
@@ -311,7 +350,11 @@ elif st.session_state.phase == 2:
                     st.session_state.phase = 3
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Erreur : {str(e)}")
+                    err = str(e)
+                    if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                        st.error("⚠️ Quota épuisé. Changez de modèle dans la barre latérale.")
+                    else:
+                        st.error(f"Erreur : {err}")
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  PHASE 3
@@ -342,4 +385,8 @@ elif st.session_state.phase == 3:
                     st.session_state.p3_msgs.append({"role": "assistant", "content": response})
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Erreur : {str(e)}")
+                    err = str(e)
+                    if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                        st.error("⚠️ Quota épuisé. Changez de modèle dans la barre latérale.")
+                    else:
+                        st.error(f"Erreur : {err}")
