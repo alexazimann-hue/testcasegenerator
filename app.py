@@ -207,7 +207,7 @@ def render_chat(msgs):
 #  PHASE 1
 # ═════════════════════════════════════════════════════════════════════════════
 render_stepper()
-st.title("🧪 QA Copilot — Générateur de Cas de Tests")
+st.title("🧪 QA Copilot — Générateur de Cas de Tests V0.0.1")
 
 if not api_key:
     st.warning("⚠️ Entrez votre clé API Gemini dans la barre latérale pour commencer.")
