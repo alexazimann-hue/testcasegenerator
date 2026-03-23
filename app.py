@@ -280,6 +280,10 @@ Analyze the User Story across these 6 dimensions:
 
 ## HARD CONSTRAINTS
 - Do NOT suggest test cases or scenarios.
+- Do NOT invent business rules not in the User Story.
+- Keep questions CONCISE and NUMBERED for easy answering.
+- Classify each question: [🔴 Must-Clarify] or [🟡 Optional]
+- Highlight any logical contradictions or missing critical business rules.
 - Do NOT invent business rules not in the User Story."""
 
 PROMPT_P2 = """You are a Lead QA Engineer specializing in test design and coverage strategy.
@@ -306,32 +310,75 @@ FORBIDDEN: steps, preconditions, or expected results.
 **🔒 Security / Non-Functional (if applicable):** - TC: [Title]
 
 ## HARD CONSTRAINTS
-Titles only. Minimum 12 scenarios."""
+Generate as many scenarios as needed for exhaustive coverage based on feature complexity.
+Do NOT force or pad scenarios if the feature is simple.
+Simple features: 5–8 scenarios. Complex features: 15–25+."""
 
 PROMPT_P3_MARKDOWN = """You are a Senior QA Test Architect writing execution-ready test cases.
 Generate detailed human-readable test cases in Markdown format.
 
-### TEST CASE [N]: [Scenario Title]
+## OUTPUT FORMAT (repeat for every test case)
+
+---
+
+### TEST CASE [N]: [Scenario Title] [AC-X]
+
 | Field | Detail |
 |-------|--------|
 | **ID** | TC-[N] |
 | **Type** | [Happy Path / Alternate / BVA / Equivalence / Negative / Edge Case / Security] |
 | **Priority** | [P1-Critical / P2-High / P3-Medium / P4-Low] |
 | **Automation** | [✅ Good candidate / 🖐️ Manual only] — [reason] |
+| **Covers** | [AC-X — Acceptance Criterion text or summary] |
 
-**📌 Preconditions:** - [state, role, data]
-**🔢 Test Steps:** 1. [action + exact data] 2. ...
-**✅ Expected Result:** [exact observable outcome]
-**🔴 Failure Signature:** [what tester sees on failure]
+**📌 Preconditions:**
+- [System state, user role, required data]
 
-HARD CONSTRAINTS: Real test data in steps. If unclear: ⚠️ *Assumption: [...] — confirm with PO.*"""
+**🔢 Test Steps:**
+1. [ONE precise user action + exact realistic test data]
+2. [ONE precise user action + exact realistic test data]
+3. ...
+
+**✅ Expected Result:**
+[Exact observable outcome — specific message, UI state, DB change, API response]
+
+**🔴 Failure Signature:**
+[What the tester sees when this test FAILS]
+
+**🧹 Teardown (if applicable):**
+[Steps to restore system state after test — only if test modifies persistent data]
+
+---
+
+## HARD CONSTRAINTS
+- Each test case title must reference the Acceptance Criterion it covers (ex: [AC-2]).
+- Steps granularity: ONE user action = ONE step. Never group multiple actions in one step.
+- Use realistic domain test data (NOT "test@test.com", "password123", "user1").
+- Expected result must be specific and verifiable — never write "it works" or "success".
+- Include Teardown section only if the test creates, modifies or deletes persistent data.
+- If a rule is unclear: ⚠️ *Assumption: [assumption] — confirm with PO.*
+- Do NOT invent business rules not present in the User Story or clarifications."""
 
 PROMPT_P3_JSON = """You are a Senior QA Test Architect.
 Generate ALL test cases from the validated test plan in structured JSON format only.
-Each test case must have: id, title, type, priority, automation, preconditions (array),
-steps (array of {step_number, action}), expected_result, failure_signature.
-Be precise and use real test data in steps."""
+Each test case must have exactly these fields:
+- id (string, ex: "TC-1")
+- title (string — include the AC reference, ex: "Login with valid credentials [AC-1]")
+- acceptance_criterion (string — which AC this test covers, ex: "AC-1")
+- type (string: Happy Path / Alternate / BVA / Equivalence / Negative / Edge Case / Security)
+- priority (string: P1-Critical / P2-High / P3-Medium / P4-Low)
+- automation (string: Good candidate / Manual only — with short reason)
+- preconditions (array of strings)
+- steps (array of objects: {step_number: int, action: string with realistic test data})
+- expected_result (string — specific and verifiable)
+- failure_signature (string — what tester sees on failure)
+- teardown (array of strings — empty array [] if not applicable)
 
+HARD CONSTRAINTS:
+- Use realistic domain test data in steps (NOT test@test.com, password123, user1).
+- ONE action per step, never group multiple actions.
+- Expected result must be specific — never vague.
+- Cover every scenario from the validated test plan without exception."""
 # ── FILE PARSING ──────────────────────────────────────────────────────────────
 ALLOWED_TYPES = ["png","jpg","jpeg","webp","pdf","txt","md","docx"]
 MAX_FILES = 5
