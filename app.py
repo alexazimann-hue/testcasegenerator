@@ -280,7 +280,6 @@ Analyze the User Story across these 6 dimensions:
 
 ## HARD CONSTRAINTS
 - Do NOT suggest test cases or scenarios.
-- Do NOT invent business rules not in the User Story.
 - Keep questions CONCISE and NUMBERED for easy answering.
 - Classify each question: [🔴 Must-Clarify] or [🟡 Optional]
 - Highlight any logical contradictions or missing critical business rules.
