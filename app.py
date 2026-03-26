@@ -190,7 +190,7 @@ def generate_test_cases_in_batches(system_prompt, plan_ctx, scenario_titles, bat
             f"Number them starting from TC-{idx * batch_size + 1}."
         )
         # Markdown
-        md = call_llm([], system_prompt, batch_prompt, max_tokens=6000)
+        md, _ = generate_until_complete(system_prompt, [], batch_prompt, max_iterations=4, max_tokens=6000)
         all_markdown.append(md)
 
         # Structured JSON
@@ -217,6 +217,39 @@ def extract_scenario_titles(plan_text):
         # Fallback: any bullet line
         titles = re.findall(r"^\s*[-•]\s*(.+)", plan_text, re.MULTILINE)
     return [t.strip() for t in titles if t.strip()]
+
+
+COMPLETION_SIGNAL = "[[GENERATION_COMPLETE]]"
+
+def generate_until_complete(system_prompt, history, initial_prompt, max_iterations=6, max_tokens=8000):
+    """
+    Call LLM in a loop until it emits COMPLETION_SIGNAL or max_iterations is reached.
+    Returns the full concatenated markdown (clean, without the signal token).
+    """
+    messages = list(history)
+    full_parts = []
+
+    for i in range(max_iterations):
+        if i == 0:
+            user_msg = initial_prompt + (
+                "\n\n---\nIMPORTANT: When you have finished generating ALL test cases, "
+                f"end your response with the exact token: {COMPLETION_SIGNAL}"
+            )
+        else:
+            user_msg = (
+                "Continue EXACTLY where you stopped. Generate the remaining test cases. "
+                f"When ALL test cases are done, end with: {COMPLETION_SIGNAL}"
+            )
+
+        response = call_llm(messages, system_prompt, user_msg, max_tokens=max_tokens)
+        full_parts.append(response.replace(COMPLETION_SIGNAL, "").rstrip())
+        messages.append({"role": "user", "content": user_msg})
+        messages.append({"role": "assistant", "content": response})
+
+        if COMPLETION_SIGNAL in response:
+            break
+
+    return "\n\n".join(p for p in full_parts if p.strip()), messages
 
 # ── PROVIDER DEFAULTS ─────────────────────────────────────────────────────────
 PROVIDER_DEFAULTS = {
@@ -585,13 +618,16 @@ elif st.session_state.active_phase == 2:
             except Exception as e:
                 handle_error(e); st.stop()
         else:
-            # Single call — small plan (≤6 scenarios)
-            with st.spinner("📝 Generating test cases…"):
+            # Auto-loop — small plan (≤6 scenarios), loop until COMPLETION_SIGNAL
+            with st.spinner("📝 Generating test cases (auto-completing…)"):
                 try:
-                    md = call_llm([], PROMPT_P3_MARKDOWN,
-                                  plan_ctx + "\n\nGenerate COMPLETE test cases for every scenario.",
-                                  max_tokens=8000)
-                    st.session_state.p3_msgs = [{"role":"user","content":plan_ctx},{"role":"assistant","content":md}]
+                    md, final_msgs = generate_until_complete(
+                        PROMPT_P3_MARKDOWN, [],
+                        plan_ctx + "\n\nGenerate COMPLETE test cases for every scenario."
+                    )
+                    st.session_state.p3_msgs = final_msgs + [{"role":"assistant","content":md}] if not final_msgs else final_msgs
+                    # Store clean final markdown separately for display
+                    st.session_state.p3_full_md = md
                 except Exception as e: handle_error(e); st.stop()
             with st.spinner("🗂️ Generating structured JSON…"):
                 try:
@@ -640,22 +676,28 @@ elif st.session_state.active_phase == 3:
                 st.json(tc_data)
     st.divider()
 
-    # Continue button — always visible so user can resume if generation was cut off
+    # Auto-repair button — only shown if user suspects truncation
     if st.session_state.p3_msgs:
-        if st.button("▶ Continue / Complete generation", use_container_width=True, key="p3_continue"):
-            with st.spinner("Continuing generation…"):
+        with st.expander("⚠️ Generation incomplete? Click to auto-complete", expanded=False):
+            st.caption("This will automatically continue until all test cases are generated.")
+            if st.button("🔄 Auto-complete remaining test cases", use_container_width=True, key="p3_autocomplete"):
+                progress = st.progress(0, text="Auto-completing… iteration 1")
                 try:
-                    response = call_llm(
-                        st.session_state.p3_msgs,
+                    # Resume from existing history
+                    existing_md = st.session_state.get("p3_full_md", "")
+                    extra_md, new_msgs = generate_until_complete(
                         PROMPT_P3_MARKDOWN,
-                        "The previous response may have been cut off. Continue EXACTLY where you stopped. "
-                        "If all test cases are already complete, write: 'Generation complete — all test cases have been generated.'",
-                        max_tokens=8000
+                        st.session_state.p3_msgs,
+                        "Continue EXACTLY where you stopped. Generate ALL remaining test cases.",
+                        max_iterations=6, max_tokens=8000
                     )
-                    # Append continuation to last assistant message
-                    st.session_state.p3_msgs[-1]["content"] += "\n\n" + response
+                    # Merge cleanly
+                    st.session_state.p3_full_md = (existing_md + "\n\n" + extra_md).strip()
+                    st.session_state.p3_msgs = new_msgs
+                    progress.progress(1.0, text="✅ Complete!")
                     st.rerun()
-                except Exception as e: handle_error(e)
+                except Exception as e:
+                    handle_error(e)
 
     reply3 = st.chat_input("Request adjustments or additional test cases…", key="p3_chat")
     if reply3:
