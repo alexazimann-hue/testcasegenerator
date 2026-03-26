@@ -543,7 +543,7 @@ def render_tab_bar():
                     st.rerun()
 
 # ═════════════════════════════════════════════════════════════════════════════
-st.title("🧪 QA Copilot — AI Test Case Generator")
+st.title("🧪 QAForge — AI Test Case Generator")
 
 if not api_key:
     st.warning(f"⚠️ Enter your {provider} API key in the sidebar.")
@@ -737,56 +737,42 @@ elif st.session_state.active_phase == 2:
         st.markdown(f"📋 **{st.session_state.get('p2_summary', 'Test Plan')}**")
         st.divider()
 
-        # ── Group by category ─────────────────────────────────────────────────
-        from collections import defaultdict
-        by_cat = defaultdict(list)
         for s in scenarios:
-            by_cat[s.get("category", "General")].append(s)
+            sid = s["id"]
+            rv = review[sid]
+            is_sel = rv["selected"]
+            cur_prio = rv["priority"]
+            cat = s.get("category", "")
+            cat_icon = CAT_ICONS.get(cat, "📌")
 
-        for cat, items in by_cat.items():
-            icon = CAT_ICONS.get(cat, "📌")
-            st.markdown(f"#### {icon} {cat}")
-            for s in items:
-                sid = s["id"]
-                rv = review[sid]
-                is_sel = rv["selected"]
-                cur_prio = rv["priority"]
-
-                # Card row
-                c1, c2, c3, c4, c5, c6 = st.columns([0.4, 0.4, 4, 1, 1, 1])
-                with c1:
-                    if st.button("✅", key=f"sel_{sid}",
-                                 help="Include in Phase 3",
-                                 type="primary" if is_sel else "secondary"):
-                        st.session_state.p2_review[sid]["selected"] = True; st.rerun()
-                with c2:
-                    if st.button("❌", key=f"del_{sid}",
-                                 help="Exclude from Phase 3",
-                                 type="primary" if not is_sel else "secondary"):
-                        st.session_state.p2_review[sid]["selected"] = False; st.rerun()
-                with c3:
-                    label = s["title"]
-                    if not is_sel:
-                        st.markdown(f"~~{label}~~")
-                    else:
-                        st.markdown(label)
-                for prio in ["P1","P2","P3","P4"]:
-                    col = [c4, c5, c6, None][["P1","P2","P3","P4"].index(prio)] if prio != "P4" else c6
-                    if col is None: continue
-                with c4:
-                    if st.button(f"{PRIORITY_COLORS['Very High']} VH", key=f"p1_{sid}",
-                                 type="primary" if cur_prio=="Very High" else "secondary"):
-                        st.session_state.p2_review[sid]["priority"] = "P1"; st.rerun()
-                with c5:
-                    if st.button(f"{PRIORITY_COLORS['High']} High", key=f"p2_{sid}",
-                                 type="primary" if cur_prio=="High" else "secondary"):
-                        st.session_state.p2_review[sid]["priority"] = "P2"; st.rerun()
-                with c6:
-                    if st.button(f"{PRIORITY_COLORS['Medium']} Med", key=f"p3p_{sid}",
-                                 type="primary" if cur_prio=="Medium" else "secondary"):
-                        st.session_state.p2_review[sid]["priority"] = "P3"; st.rerun()
-
-            st.divider()
+            c1, c2, c3, c4, c5, c6, c7 = st.columns([0.5, 0.5, 3.5, 1.2, 1.2, 1.2, 1.2])
+            with c1:
+                if st.button("✅", key=f"sel_{sid}", help="Include in Phase 3",
+                             type="primary" if is_sel else "secondary"):
+                    st.session_state.p2_review[sid]["selected"] = True; st.rerun()
+            with c2:
+                if st.button("❌", key=f"del_{sid}", help="Exclude from Phase 3",
+                             type="primary" if not is_sel else "secondary"):
+                    st.session_state.p2_review[sid]["selected"] = False; st.rerun()
+            with c3:
+                label = f"{cat_icon} {s['title']}"
+                st.markdown(f"~~{label}~~" if not is_sel else label)
+            with c4:
+                if st.button("🔴 Very High", key=f"pvh_{sid}",
+                             type="primary" if cur_prio=="Very High" else "secondary"):
+                    st.session_state.p2_review[sid]["priority"] = "Very High"; st.rerun()
+            with c5:
+                if st.button("🟠 High", key=f"phi_{sid}",
+                             type="primary" if cur_prio=="High" else "secondary"):
+                    st.session_state.p2_review[sid]["priority"] = "High"; st.rerun()
+            with c6:
+                if st.button("🟡 Medium", key=f"pmd_{sid}",
+                             type="primary" if cur_prio=="Medium" else "secondary"):
+                    st.session_state.p2_review[sid]["priority"] = "Medium"; st.rerun()
+            with c7:
+                if st.button("🟢 Low", key=f"plw_{sid}",
+                             type="primary" if cur_prio=="Low" else "secondary"):
+                    st.session_state.p2_review[sid]["priority"] = "Low"; st.rerun()
 
     else:
         # Fallback: afficher le chat si pas encore de scenarios parsés
