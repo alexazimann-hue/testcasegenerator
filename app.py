@@ -629,15 +629,10 @@ elif st.session_state.active_phase == 2:
                     # Store clean final markdown separately for display
                     st.session_state.p3_full_md = md
                 except Exception as e: handle_error(e); st.stop()
-            with st.spinner("🗂️ Generating structured JSON…"):
-                try:
-                    tc = call_llm_structured(PROMPT_P3_JSON,
-                                             plan_ctx + "\n\nGenerate ALL test cases in structured JSON.",
-                                             max_tokens=8000)
-                    st.session_state.structured_test_cases = tc
-                except Exception as e:
-                    st.warning(f"⚠️ JSON export unavailable: {e}")
-                    st.session_state.structured_test_cases = None
+        # Mark JSON/CSV for background generation after TCs are displayed
+        st.session_state.structured_test_cases = None
+        st.session_state.p3_bg_json_pending = True
+        st.session_state.p3_bg_json_ctx = plan_ctx
         st.session_state.p2_validated = True
         st.session_state.phase_reached = max(st.session_state.phase_reached, 3)
         st.session_state.active_phase = 3
@@ -674,6 +669,22 @@ elif st.session_state.active_phase == 3:
         if tc_data:
             with st.expander(f"👁️ Preview JSON ({len(tc_data)} test cases)", expanded=False):
                 st.json(tc_data)
+    # ── Background JSON/CSV generation ──────────────────────────────────────────
+    if st.session_state.get("p3_bg_json_pending") and st.session_state.get("p3_bg_json_ctx"):
+        with st.status("⚙️ Generating JSON & CSV exports in background…", expanded=False) as bg_status:
+            try:
+                tc = call_llm_structured(
+                    PROMPT_P3_JSON,
+                    st.session_state.p3_bg_json_ctx + "\n\nGenerate ALL test cases in structured JSON.",
+                    max_tokens=8000
+                )
+                st.session_state.structured_test_cases = tc
+                st.session_state.p3_bg_json_pending = False
+                bg_status.update(label="✅ JSON & CSV ready for export!", state="complete", expanded=False)
+            except Exception as e:
+                st.session_state.p3_bg_json_pending = False
+                bg_status.update(label=f"⚠️ Export generation failed: {e}", state="error")
+
     st.divider()
 
     # Auto-repair button — only shown if user suspects truncation
