@@ -269,7 +269,7 @@ PROVIDER_DEFAULTS = {
 }
 
 # ── PAGE CONFIG ───────────────────────────────────────────────────────────────
-st.set_page_config(page_title="QA Copilot – AI Test Case Generator", page_icon="🧪", layout="wide")
+st.set_page_config(page_title="QAForge – AI Test Case Generator", page_icon="🧪", layout="wide")
 st.markdown("""
 <style>
 .badge{display:inline-block;padding:6px 16px;border-radius:20px;font-weight:700;font-size:13px;margin-bottom:16px;}
@@ -497,7 +497,7 @@ def render_tab_bar():
                     st.rerun()
 
 # ═════════════════════════════════════════════════════════════════════════════
-st.title("🧪 QA Copilot — AI Test Case Generator")
+st.title("🧪 QAForge — AI Test Case Generator")
 
 if not api_key:
     st.warning(f"⚠️ Enter your {provider} API key in the sidebar.")
