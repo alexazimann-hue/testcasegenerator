@@ -1,4 +1,5 @@
 import streamlit as st
+import time
 from PIL import Image
 import io
 import docx
@@ -190,7 +191,7 @@ def generate_test_cases_in_batches(system_prompt, plan_ctx, scenario_titles, bat
             f"Number them starting from TC-{idx * batch_size + 1}."
         )
         # Markdown
-        md, _ = generate_until_complete(system_prompt, [], batch_prompt, max_iterations=4, max_tokens=6000)
+        md, _ = generate_until_complete(system_prompt, [], batch_prompt, max_iterations=2, max_tokens=6000)
         all_markdown.append(md)
 
         # Structured JSON
@@ -221,7 +222,7 @@ def extract_scenario_titles(plan_text):
 
 COMPLETION_SIGNAL = "[[GENERATION_COMPLETE]]"
 
-def generate_until_complete(system_prompt, history, initial_prompt, max_iterations=6, max_tokens=8000):
+def generate_until_complete(system_prompt, history, initial_prompt, max_iterations=2, max_tokens=8000):
     """
     Call LLM in a loop until it emits COMPLETION_SIGNAL or max_iterations is reached.
     Returns the full concatenated markdown (clean, without the signal token).
@@ -248,6 +249,8 @@ def generate_until_complete(system_prompt, history, initial_prompt, max_iteratio
 
         if COMPLETION_SIGNAL in response:
             break
+        if i < max_iterations - 1:
+            time.sleep(2)  # Avoid RPM rate limit between iterations
 
     return "\n\n".join(p for p in full_parts if p.strip()), messages
 
@@ -629,9 +632,9 @@ elif st.session_state.active_phase == 2:
                     # Store clean final markdown separately for display
                     st.session_state.p3_full_md = md
                 except Exception as e: handle_error(e); st.stop()
-        # Mark JSON/CSV for background generation after TCs are displayed
+        # JSON/CSV generated on-demand (Export button) to save API quota
         st.session_state.structured_test_cases = None
-        st.session_state.p3_bg_json_pending = True
+        st.session_state.p3_bg_json_pending = False
         st.session_state.p3_bg_json_ctx = plan_ctx
         st.session_state.p2_validated = True
         st.session_state.phase_reached = max(st.session_state.phase_reached, 3)
@@ -669,21 +672,22 @@ elif st.session_state.active_phase == 3:
         if tc_data:
             with st.expander(f"👁️ Preview JSON ({len(tc_data)} test cases)", expanded=False):
                 st.json(tc_data)
-    # ── Background JSON/CSV generation ──────────────────────────────────────────
-    if st.session_state.get("p3_bg_json_pending") and st.session_state.get("p3_bg_json_ctx"):
-        with st.status("⚙️ Generating JSON & CSV exports in background…", expanded=False) as bg_status:
-            try:
-                tc = call_llm_structured(
-                    PROMPT_P3_JSON,
-                    st.session_state.p3_bg_json_ctx + "\n\nGenerate ALL test cases in structured JSON.",
-                    max_tokens=8000
-                )
-                st.session_state.structured_test_cases = tc
-                st.session_state.p3_bg_json_pending = False
-                bg_status.update(label="✅ JSON & CSV ready for export!", state="complete", expanded=False)
-            except Exception as e:
-                st.session_state.p3_bg_json_pending = False
-                bg_status.update(label=f"⚠️ Export generation failed: {e}", state="error")
+    # ── On-demand JSON/CSV generation (saves API quota) ─────────────────────────
+    if st.session_state.get("p3_bg_json_ctx") and st.session_state.structured_test_cases is None:
+        st.info("💡 JSON & CSV exports are ready to generate on demand.")
+        if st.button("⚙️ Generate JSON & CSV exports", use_container_width=True, key="p3_gen_exports"):
+            with st.spinner("Generating structured exports…"):
+                try:
+                    tc = call_llm_structured(
+                        PROMPT_P3_JSON,
+                        st.session_state.p3_bg_json_ctx + "\n\nGenerate ALL test cases in structured JSON.",
+                        max_tokens=8000
+                    )
+                    st.session_state.structured_test_cases = tc
+                    st.success("✅ JSON & CSV ready!")
+                    st.rerun()
+                except Exception as e:
+                    st.warning(f"⚠️ Export generation failed: {e}")
 
     st.divider()
 
@@ -700,7 +704,7 @@ elif st.session_state.active_phase == 3:
                         PROMPT_P3_MARKDOWN,
                         st.session_state.p3_msgs,
                         "Continue EXACTLY where you stopped. Generate ALL remaining test cases.",
-                        max_iterations=6, max_tokens=8000
+                        max_iterations=2, max_tokens=8000
                     )
                     # Merge cleanly
                     st.session_state.p3_full_md = (existing_md + "\n\n" + extra_md).strip()
