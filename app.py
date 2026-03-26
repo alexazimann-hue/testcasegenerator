@@ -321,7 +321,7 @@ defaults = {
     "p1_validated": False, "p2_validated": False,
     "us_submitted": False, "p1_context": "", "p2_draft": "",
     "structured_test_cases": None,
-    "p1_questions": [], "p1_answers": {}, "p1_summary": "", "p1_user_story": "", "p1_raw_prompt": "",
+    "p1_questions": [], "p1_answers": {}, "p1_summary": "", "p1_user_story": "", "p1_raw_prompt": "", "p1_extra_ctx": "",
     "p2_scenarios": [], "p2_summary": "", "p2_review": {},
 }
 for k, v in defaults.items():
@@ -609,6 +609,24 @@ if st.session_state.active_phase == 1:
                         st.rerun()
                     except Exception as e: handle_error(e)
 
+    elif st.session_state.p1_validated:
+        # ── Phase 1 already validated — show read-only summary ───────────────
+        st.success("✅ Phase 1 validated — Requirements Analysis complete.")
+        st.markdown(f"**📋 Summary:** {st.session_state.get('p1_summary', '')}")
+        st.divider()
+        st.markdown("**🔍 Clarification Q&A:**")
+        questions = st.session_state.get("p1_questions", [])
+        answers = st.session_state.get("p1_answers", {})
+        for q in questions:
+            ans = answers.get(q["id"], "_Not answered_")
+            st.markdown(f"- **{q['question']}** → {ans}")
+        extra = st.session_state.get("p1_extra_ctx", "")
+        if extra:
+            st.markdown(f"**💬 Additional context:** {extra}")
+        st.divider()
+        if st.button("▶ Go to Phase 2", type="primary", use_container_width=True):
+            st.session_state.active_phase = 2; st.rerun()
+
     elif st.session_state.us_submitted and not st.session_state.p1_validated:
         # ── Display summary ───────────────────────────────────────────────────
         st.info(f"📋 **Current Understanding:** {st.session_state.p1_summary}")
@@ -681,6 +699,7 @@ if st.session_state.active_phase == 1:
 
         if st.button("✅ Submit Answers → Phase 2", type="primary", use_container_width=True, key="p1_val"):
             # Build structured context from answers
+            st.session_state.p1_extra_ctx = extra  # save for read-only view
             answers_text = "\n".join(
                 f"- [{q.get('category','')}] {q['question']}\n  → {st.session_state.p1_answers.get(q['id'], 'Not answered')}"
                 for q in questions
