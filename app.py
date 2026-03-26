@@ -281,7 +281,7 @@ st.markdown("""
 
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.title("⚙️ Configuration")
+    st.title("🧪 QAForge — AI Test Case Generator")
 
     provider = st.radio("LLM Provider", ["Gemini", "OpenAI"], horizontal=True)
     cfg = PROVIDER_DEFAULTS[provider]
@@ -322,6 +322,7 @@ defaults = {
     "us_submitted": False, "p1_context": "", "p2_draft": "",
     "structured_test_cases": None,
     "p1_questions": [], "p1_answers": {}, "p1_summary": "", "p1_user_story": "", "p1_raw_prompt": "",
+    "p2_scenarios": [], "p2_summary": "", "p2_review": {},
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -396,7 +397,7 @@ Keep responses concise and professional.
 PROMPT_P2 = """You are a Lead QA Engineer specializing in test design and coverage strategy.
 
 ## YOUR ROLE
-Generate a comprehensive TEST PLAN as scenario TITLES ONLY.
+Generate a comprehensive TEST PLAN as scenario TITLES ONLY with metadata.
 FORBIDDEN: steps, preconditions, or expected results.
 
 ## COVERAGE — apply ALL applicable techniques:
@@ -405,19 +406,36 @@ FORBIDDEN: steps, preconditions, or expected results.
 - Error Guessing, State Transitions, Negative Testing
 - Security / Non-Functional if applicable
 
-## OUTPUT FORMAT (STRICT)
-📋 **PHASE 2 — Test Plan (Draft)**
-**Feature Summary:** [2–3 sentences]
-**✅ Happy Path:** - TC: [Title]
-**🔄 Alternate Flows:** - TC: [Title]
-**🔢 Boundary Value Analysis:** - TC: [Title — specify boundary]
-**🔀 Equivalence Partitioning:** - TC: [Title — specify partition]
-**❌ Negative / Error Cases:** - TC: [Title]
-**⚠️ Edge Cases:** - TC: [Title]
-**🔒 Security / Non-Functional (if applicable):** - TC: [Title]
+## OUTPUT FORMAT (STRICT JSON — no markdown, no explanation)
+{
+  "summary": "2-3 sentence feature summary",
+  "scenarios": [
+    {
+      "id": 1,
+      "title": "Successful login with valid credentials",
+      "category": "Happy Path",
+      "priority": "Very High"
+    },
+    {
+      "id": 2,
+      "title": "Login with invalid password",
+      "category": "Negative",
+      "priority": "High"
+    }
+  ]
+}
+
+## CATEGORIES (use exactly these values):
+Happy Path | Alternate Flow | BVA | Equivalence | Negative | Edge Case | Security | Non-Functional
+
+## PRIORITIES (use exactly these values):
+Very High | High | Medium | Low
 
 ## HARD CONSTRAINTS
-Titles only. Minimum 12 scenarios."""
+- Output ONLY valid JSON. No markdown fences, no preamble.
+- Minimum 12 scenarios.
+- Assign realistic priorities based on business impact.
+"""
 
 PROMPT_P3_MARKDOWN = """You are a Senior QA Test Architect writing execution-ready test cases.
 Generate detailed human-readable test cases in Markdown format.
@@ -427,7 +445,7 @@ Generate detailed human-readable test cases in Markdown format.
 |-------|--------|
 | **ID** | TC-[N] |
 | **Type** | [Happy Path / Alternate / BVA / Equivalence / Negative / Edge Case / Security] |
-| **Priority** | [P1-Critical / P2-High / P3-Medium / P4-Low] |
+| **Priority** | [Very High / High / Medium / Low] |
 | **Automation** | [✅ Good candidate / 🖐️ Manual only] — [reason] |
 
 **📌 Preconditions:** - [state, role, data]
@@ -677,9 +695,14 @@ if st.session_state.active_phase == 1:
             )
             with st.spinner("📋 Generating test plan…"):
                 try:
-                    response = call_llm([], PROMPT_P2, ctx, max_tokens=3000)
-                    st.session_state.p2_msgs = [{"role":"user","content":ctx},{"role":"assistant","content":response}]
-                    st.session_state.p2_draft = response
+                    raw_p2 = call_llm([], PROMPT_P2, ctx, max_tokens=3000)
+                    clean_p2 = raw_p2.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+                    parsed_p2 = json.loads(clean_p2)
+                    st.session_state.p2_scenarios = parsed_p2.get("scenarios", [])
+                    st.session_state.p2_summary = parsed_p2.get("summary", "")
+                    st.session_state.p2_draft = raw_p2
+                    st.session_state.p2_msgs = [{"role":"user","content":ctx},{"role":"assistant","content":raw_p2}]
+                    st.session_state.p2_review = {}
                     st.session_state.p1_context = ctx
                     st.session_state.p1_validated = True
                     st.session_state.phase_reached = max(st.session_state.phase_reached, 2)
@@ -692,22 +715,124 @@ if st.session_state.active_phase == 1:
 # ═════════════════════════════════════════════════════════════════════════════
 elif st.session_state.active_phase == 2:
     st.markdown('<div class="badge b2">📋 Phase 2 — Lead QA Engineer: Test Plan</div>', unsafe_allow_html=True)
-    render_chat(st.session_state.p2_msgs)
-    st.divider()
-    reply2 = st.chat_input("Request changes to the test plan…", key="p2_chat")
+
+    scenarios = st.session_state.get("p2_scenarios", [])
+
+    if scenarios:
+        # ── Init review state ─────────────────────────────────────────────────
+        if "p2_review" not in st.session_state or len(st.session_state.p2_review) != len(scenarios):
+            st.session_state.p2_review = {
+                s["id"]: {"selected": True, "priority": s.get("priority", "P2")}
+                for s in scenarios
+            }
+
+        review = st.session_state.p2_review
+        PRIORITY_COLORS = {"Very High": "🔴", "High": "🟠", "Medium": "🟡", "Low": "🟢"}
+        CAT_ICONS = {
+            "Happy Path": "✅", "Alternate Flow": "🔄", "BVA": "🔢",
+            "Equivalence": "🔀", "Negative": "❌", "Edge Case": "⚠️",
+            "Security": "🔒", "Non-Functional": "⚙️"
+        }
+
+        st.markdown(f"📋 **{st.session_state.get('p2_summary', 'Test Plan')}**")
+        st.divider()
+
+        # ── Group by category ─────────────────────────────────────────────────
+        from collections import defaultdict
+        by_cat = defaultdict(list)
+        for s in scenarios:
+            by_cat[s.get("category", "General")].append(s)
+
+        for cat, items in by_cat.items():
+            icon = CAT_ICONS.get(cat, "📌")
+            st.markdown(f"#### {icon} {cat}")
+            for s in items:
+                sid = s["id"]
+                rv = review[sid]
+                is_sel = rv["selected"]
+                cur_prio = rv["priority"]
+
+                # Card row
+                c1, c2, c3, c4, c5, c6 = st.columns([0.4, 0.4, 4, 1, 1, 1])
+                with c1:
+                    if st.button("✅", key=f"sel_{sid}",
+                                 help="Include in Phase 3",
+                                 type="primary" if is_sel else "secondary"):
+                        st.session_state.p2_review[sid]["selected"] = True; st.rerun()
+                with c2:
+                    if st.button("❌", key=f"del_{sid}",
+                                 help="Exclude from Phase 3",
+                                 type="primary" if not is_sel else "secondary"):
+                        st.session_state.p2_review[sid]["selected"] = False; st.rerun()
+                with c3:
+                    label = s["title"]
+                    if not is_sel:
+                        st.markdown(f"~~{label}~~")
+                    else:
+                        st.markdown(label)
+                for prio in ["P1","P2","P3","P4"]:
+                    col = [c4, c5, c6, None][["P1","P2","P3","P4"].index(prio)] if prio != "P4" else c6
+                    if col is None: continue
+                with c4:
+                    if st.button(f"{PRIORITY_COLORS['Very High']} VH", key=f"p1_{sid}",
+                                 type="primary" if cur_prio=="Very High" else "secondary"):
+                        st.session_state.p2_review[sid]["priority"] = "P1"; st.rerun()
+                with c5:
+                    if st.button(f"{PRIORITY_COLORS['High']} High", key=f"p2_{sid}",
+                                 type="primary" if cur_prio=="High" else "secondary"):
+                        st.session_state.p2_review[sid]["priority"] = "P2"; st.rerun()
+                with c6:
+                    if st.button(f"{PRIORITY_COLORS['Medium']} Med", key=f"p3p_{sid}",
+                                 type="primary" if cur_prio=="Medium" else "secondary"):
+                        st.session_state.p2_review[sid]["priority"] = "P3"; st.rerun()
+
+            st.divider()
+
+    else:
+        # Fallback: afficher le chat si pas encore de scenarios parsés
+        render_chat(st.session_state.p2_msgs)
+
+    # ── Chat modifications ────────────────────────────────────────────────────
+    st.markdown("#### 💬 Request global modifications")
+    reply2 = st.chat_input("Add scenarios, change coverage, request modifications…", key="p2_chat")
     if reply2:
-        st.session_state.p2_msgs.append({"role":"user","content":reply2})
-        with st.spinner("Updating…"):
+        with st.spinner("Updating plan…"):
             try:
-                response = call_llm(st.session_state.p2_msgs[:-1], PROMPT_P2, reply2, max_tokens=3000)
-                st.session_state.p2_msgs.append({"role":"assistant","content":response})
-                st.session_state.p2_draft = response
+                raw = call_llm(st.session_state.p2_msgs, PROMPT_P2, reply2, max_tokens=3000)
+                clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+                parsed = json.loads(clean)
+                st.session_state.p2_scenarios = parsed.get("scenarios", [])
+                st.session_state.p2_summary = parsed.get("summary", "")
+                st.session_state.p2_draft = raw
+                st.session_state.p2_msgs.append({"role":"user","content":reply2})
+                st.session_state.p2_msgs.append({"role":"assistant","content":raw})
+                st.session_state.p2_review = {}  # reset review on plan update
                 st.rerun()
             except Exception as e: handle_error(e)
+
     if st.button("✅ Validate Plan → Phase 3", type="primary", use_container_width=True, key="p2_val"):
-        plan_ctx = f"Validated test plan:\n\n{st.session_state.p2_draft}\n\nContext:\n{st.session_state.p1_context}"
-        # Extract scenario titles for batch generation
-        scenario_titles = extract_scenario_titles(st.session_state.p2_draft)
+        # Build plan from selected scenarios with user-modified priorities
+        review = st.session_state.get("p2_review", {})
+        all_scenarios = st.session_state.get("p2_scenarios", [])
+        selected_scenarios = [
+            s for s in all_scenarios
+            if review.get(s["id"], {}).get("selected", True)
+        ]
+        if not selected_scenarios:
+            st.warning("⚠️ No scenarios selected. Please select at least one scenario.")
+            st.stop()
+        # Build plan text with user-modified priorities
+        plan_lines = "\n".join(
+            f"- TC: {s['title']} [{review.get(s['id'], {}).get('priority', s.get('priority','P2'))}]"
+            for s in selected_scenarios
+        )
+        plan_ctx = (
+            f"Validated test plan ({len(selected_scenarios)} scenarios):\n\n"
+            f"{plan_lines}\n\n"
+            f"Feature summary: {st.session_state.get('p2_summary', '')}\n\n"
+            f"Context:\n{st.session_state.p1_context}"
+        )
+        scenario_titles = [s["title"] for s in selected_scenarios]
         n_scenarios = len(scenario_titles)
 
         if n_scenarios == 0:
