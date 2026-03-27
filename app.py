@@ -8,33 +8,48 @@ import json
 import csv
 
 import streamlit as st
+import streamlit.components.v1 as components
 
-hide_avatar = """
-<style>
-/* Cacher le conteneur du profil créateur */
-[class*="profileContainer"] {
-    display: none !important;
-    visibility: hidden !important;
+# JS qui s'exécute dans l'iframe et modifie le DOM parent (same-origin)
+components.html("""
+<script>
+function hideAvatar() {
+    try {
+        var parentDoc = window.parent.document;
+        
+        var selectors = [
+            '[class*="profileContainer"]',
+            '[class*="profilePreview"]',
+            '[data-testid="appCreatorAvatar"]',
+            '[class*="viewerBadge"]'
+        ];
+        
+        selectors.forEach(function(sel) {
+            parentDoc.querySelectorAll(sel).forEach(function(el) {
+                el.style.setProperty('display', 'none', 'important');
+            });
+        });
+    } catch(e) {
+        console.log('Erreur:', e);
+    }
 }
 
-/* Cacher le preview du profil */
-[class*="profilePreview"] {
-    display: none !important;
-    visibility: hidden !important;
-}
+// Exécution immédiate + délais pour attendre le chargement complet
+hideAvatar();
+setTimeout(hideAvatar, 500);
+setTimeout(hideAvatar, 1500);
+setTimeout(hideAvatar, 3000);
 
-/* Cacher l'image avatar */
-[data-testid="appCreatorAvatar"] {
-    display: none !important;
-}
-
-/* Cacher le badge "Made with Streamlit" aussi */
-[class*="viewerBadge"] {
-    display: none !important;
-}
-</style>
-"""
-st.markdown(hide_avatar, unsafe_allow_html=True)
+// MutationObserver pour les re-rendus dynamiques
+try {
+    var observer = new MutationObserver(hideAvatar);
+    observer.observe(window.parent.document.body, {
+        childList: true,
+        subtree: true
+    });
+} catch(e) {}
+</script>
+""", height=0)
 
 # ── LLM ADAPTERS ──────────────────────────────────────────────────────────────
 
