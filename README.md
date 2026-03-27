@@ -24,52 +24,84 @@ On first launch, enter your API key in the sidebar. Choose between **Gemini** (r
 
 ## 🗺️ How It Works — The 3-Phase Pipeline
 
-QAForge generates test cases through a structured 3-phase process:
+```
+Phase 1 — Analysis          Phase 2 — Review             Phase 3 — Generation
+────────────────────────    ─────────────────────────    ──────────────────────
+User story input        →   Interactive TC review    →   Full test cases
+Structured Q&A              Select / exclude TCs          Markdown display
+Click-based answers         Set priorities               JSON/CSV on demand
+```
+
+---
+
+## 🔍 Phase 1 — Requirements Analysis
+
+The user pastes their **user story** (and optionally attaches files/screenshots). The AI analyzes the story and returns a **structured JSON** with:
+- A 2-3 sentence summary of the current understanding
+- A list of clarifying questions categorized and typed
+
+### Question types displayed as interactive widgets:
+| Type | Widget |
+|------|--------|
+| `boolean` | `[✅ Yes]` `[❌ No]` buttons |
+| `multiple_choice` | `st.radio()` horizontal |
+| `text` | Short text input |
+
+### Question categories:
+`Functional` · `Validation` · `Error Handling` · `Edge Cases` · `System / Dependencies`
+
+The LLM autonomously decides how many questions to ask based on complexity — simple stories get 3-5 questions, complex ones up to 15. Every question must target a **real ambiguity**.
+
+Once all questions are answered, a single **"Submit Answers → Phase 2"** button sends the structured Q&A context to Phase 2.
+
+---
+
+## 📋 Phase 2 — Test Plan Review
+
+The AI generates a test plan as scenario titles with metadata (category + priority). Each scenario is displayed as an **interactive row**:
 
 ```
-Phase 1 — Analysis        Phase 2 — Planning         Phase 3 — Generation
-─────────────────────     ──────────────────────     ──────────────────────
-User story input      →   Acceptance Criteria    →   Full test cases
-+ Attachments             + Test Plan outline         (Markdown + JSON/CSV)
+[✅] [❌]  ✅ Successful login with valid credentials   [🔴 Very High] [🟠 High] [🟡 Medium] [🟢 Low]
+[✅] [❌]  ❌ ~~Login with empty fields~~               [🔴 Very High] [🟠 High] [🟡 Medium] [🟢 Low]
 ```
 
-### Phase 1 — Story Analysis
-The user pastes their **user story** (and optionally attaches files/screenshots). The AI analyzes the story and extracts:
-- Functional requirements
-- Edge cases and constraints
-- Suggested acceptance criteria
+- **✅ / ❌** — Include or exclude from Phase 3 generation (excluded titles are struck through)
+- **Priority buttons** — The LLM pre-selects a priority; user can override it
+- Excluded scenarios are **not sent to Phase 3**, saving API quota
+- A **chat input** at the bottom allows global plan modifications
 
-### Phase 2 — Test Plan
-The AI generates a **structured test plan** covering:
-- Happy Path scenarios
-- Negative / error cases
-- Boundary Value Analysis (BVA)
-- Equivalence Partitioning
-- Security & Non-Functional tests
+### Priority levels:
+`🔴 Very High` · `🟠 High` · `🟡 Medium` · `🟢 Low`
 
-The user can **refine the plan** via chat before proceeding.
+---
 
-### Phase 3 — Test Case Generation
-The AI generates **detailed test cases** for every scenario in the plan. Each test case includes:
+## 📝 Phase 3 — Test Case Generation
+
+Only the selected scenarios from Phase 2 are sent for detailed generation. Each test case includes:
 - `ID` (TC-N), `Type`, `Priority`, `Automation` candidate flag
 - `Preconditions`, numbered `Test Steps`, `Expected Result`, `Failure Signature`
 
-Test cases are generated using an **auto-loop** that continues until all scenarios are covered, then displayed as a unified document.
+### Auto-loop generation
+Uses `generate_until_complete()` — the LLM loops until it emits `[[GENERATION_COMPLETE]]`, guaranteeing all TCs are generated. A 2-second pause between iterations avoids RPM rate limiting.
+
+### Batch mode
+Plans with more than 6 scenarios are automatically split into batches of 6, with a progress bar displayed during generation.
+
+### Resuming truncated generation
+An expander **"⚠️ Generation incomplete?"** allows manual triggering of the auto-loop continuation.
 
 ---
 
 ## 📤 Export Formats
 
-Once test cases are generated, you can export them on demand:
-
-| Format | Content |
-|--------|---------|
-| **Markdown** | Full formatted test cases document |
+| Format | How |
+|--------|-----|
+| **Markdown** | Direct download of the generated document |
 | **Text** | Plain text version |
-| **JSON** | Structured array of test case objects |
-| **CSV** | Spreadsheet-ready format for test management tools |
+| **JSON** | Click **"⚙️ Generate JSON & CSV exports"** — structured from the Markdown (no extra TC generation) |
+| **CSV** | Same button — converted client-side from the JSON |
 
-> 💡 JSON & CSV are generated **on demand** (click "⚙️ Generate JSON & CSV exports") to save API quota.
+> 💡 JSON/CSV are generated by passing the **already-produced Markdown** to the LLM for structuring — no re-generation of test cases, saving API quota.
 
 ---
 
@@ -77,74 +109,69 @@ Once test cases are generated, you can export them on demand:
 
 ### LLM Providers
 
-#### `call_gemini(messages, system_prompt, user_message, max_tokens)`
-Sends a request to the **Google Gemini** API. Accepts a conversation history (`messages`), a system instruction, and the current user message. Returns the raw text response.
+#### `call_gemini(messages, system_prompt, user_message, images, max_tokens)`
+Calls the Google Gemini API. Accepts conversation history, system instruction, current user message, optional images (vision), and max tokens. Returns raw text.
 
-#### `call_openai(messages, system_prompt, user_message, max_tokens)`
-Sends a request to the **OpenAI** API (GPT models). Same interface as `call_gemini`. Uses the `openai` Python SDK.
+#### `call_openai(messages, system_prompt, user_message, images, max_tokens)`
+Calls the OpenAI API (GPT models). Same interface as `call_gemini`. Handles image encoding as base64 for vision calls.
 
-#### `call_llm(messages, system_prompt, user_message, max_tokens)`
-**Router function** — dispatches to `call_gemini` or `call_openai` based on the provider selected in the sidebar. All phases use this function for text generation.
+#### `call_llm(messages, system_prompt, user_message, images, max_tokens)`
+Router — dispatches to `call_gemini` or `call_openai` based on sidebar selection. Used by all phases.
 
 #### `call_llm_structured(system_prompt, user_message, max_tokens)`
-Calls the LLM with a **JSON schema** response constraint, forcing the model to return a structured array of test case objects. Used for JSON/CSV export generation.
+Calls the LLM with a JSON schema constraint. Used exclusively for JSON/CSV export — receives the final Markdown and returns a structured array of test case objects.
 
 ---
 
 ### Generation Logic
 
 #### `generate_until_complete(system_prompt, history, initial_prompt, max_iterations, max_tokens)`
-**Core auto-loop function.** Calls the LLM iteratively until it detects the `[[GENERATION_COMPLETE]]` signal token at the end of the response — meaning all test cases have been generated. Concatenates all partial responses into a single clean document.
-- `max_iterations=2` by default to respect API rate limits
-- Adds a `2s` pause between iterations to avoid RPM throttling
-- Returns the full merged markdown + updated message history
+Auto-loop function. Calls the LLM iteratively until `[[GENERATION_COMPLETE]]` is detected or `max_iterations` (default: 2) is reached. Adds a 2s pause between iterations to avoid RPM throttling. Returns merged Markdown + updated message history.
 
 #### `generate_test_cases_in_batches(system_prompt, plan_ctx, scenario_titles, batch_size)`
-Used when the test plan contains **more than 6 scenarios**. Splits the scenario list into batches of `batch_size` (default: 6) and calls `generate_until_complete` for each batch. Shows a **progress bar** during generation. Maintains continuous TC numbering across batches (`TC-1…TC-6`, `TC-7…TC-12`, etc.).
+Used for plans with more than 6 scenarios. Splits into batches of `batch_size` (default: 6), calls `generate_until_complete` per batch, shows a progress bar, and maintains continuous TC numbering across batches.
 
 #### `extract_scenario_titles(plan_text)`
-Parses the Phase 2 test plan text using regex to extract individual **scenario titles** (lines matching `- TC: ...`). Used to determine whether to use single-call or batch mode. Falls back to any bullet-point line if no `TC:` markers are found.
+Parses Phase 2 plan text with regex to extract scenario titles. Used to decide between single-call and batch mode, and to build the list of titles sent to Phase 3.
 
 ---
 
 ### Utilities
 
 #### `extract_text(file)`
-Extracts plain text content from uploaded files. Supports `.txt`, `.pdf`, `.md`, `.json`, `.csv`, and image files. Used to enrich the Phase 1 context with attachment content.
+Extracts text from uploaded files. Supports `.txt`, `.md`, `.pdf`, `.docx`. Returns empty string for unsupported formats.
 
 #### `is_image(file)`
-Returns `True` if the uploaded file is an image (`png`, `jpg`, `jpeg`, `gif`, `webp`). Used to route image files to vision-capable LLM calls.
+Returns `True` if the file extension is `png`, `jpg`, `jpeg`, or `webp`.
 
 #### `file_icon(filename)`
-Returns an emoji icon based on file extension (e.g., 📄 for PDF, 🖼️ for images). Used for display in the attachments preview section.
+Returns an emoji representing the file type (📕 PDF, 📘 DOCX, 📄 TXT, 🖼️ image).
 
 #### `handle_error(e)`
-Centralized error handler. Catches API errors (rate limits, auth failures, network issues) and displays a user-friendly `st.error()` message with actionable guidance (e.g., "Check your API key", "Rate limit reached — wait 60s").
+Centralized error handler. Displays user-friendly `st.error()` messages for rate limits, auth failures, model-not-found, and generic errors.
 
 #### `build_csv(test_cases)`
-Converts the structured list of test case objects (from `call_llm_structured`) into a **CSV string** using Python's `csv` module. Each row represents one test case with all fields as columns.
+Converts structured test case objects from `call_llm_structured()` into a CSV string using Python's `csv` module.
 
-#### `render_chat(messages, key_prefix)`
-Renders a **chat history** using `st.chat_message()` for each message in the list. Used in all three phases to display the conversation between the user and the AI.
+#### `render_chat(messages)`
+Renders a conversation history using `st.chat_message()` with role-based avatars (🧑‍💻 user / 🤖 assistant).
 
 #### `render_tab_bar(tabs, active_key)`
-Renders a **horizontal tab navigation bar** using Streamlit buttons styled as tabs. Used in Phase 3 to switch between the Markdown view and the individual TC detail view.
+Renders a horizontal tab bar using Streamlit buttons. Used in Phase 3 to switch between the Markdown view and individual TC detail panel.
 
 ---
 
-## 🔑 API Rate Limits
-
-QAForge is optimized to minimize API calls:
+## 🔑 API Usage per Action
 
 | Action | API calls |
 |--------|-----------|
-| Phase 1 analysis | 1 call |
-| Phase 2 plan generation | 1 call |
-| Phase 3 TC generation (≤6 scenarios) | 1–2 calls |
-| Phase 3 TC generation (>6 scenarios) | 1–2 calls × N batches |
-| JSON/CSV export (on demand) | 1 call |
+| Phase 1 — questions generation | 1 call |
+| Phase 2 — test plan generation | 1 call |
+| Phase 3 — TC generation (≤6 selected) | 1–2 calls |
+| Phase 3 — TC generation (>6 selected) | 1–2 calls × N batches |
+| JSON/CSV export (on demand) | 1 call (structuring from Markdown) |
 
-> ⚠️ **Gemini free tier**: 5 RPM (requests/minute). If you hit the limit, wait 60 seconds before retrying.
+> ⚠️ **Gemini free tier**: 5 RPM. If you hit the limit, wait 60 seconds before retrying. Phase 3 includes a 2-second pause between iterations to reduce throttling risk.
 
 ---
 
@@ -157,6 +184,8 @@ QAForge is optimized to minimize API calls:
 | `openai` | OpenAI API client |
 | `pandas` | CSV data handling |
 | `Pillow` | Image file processing |
+| `pypdf` | PDF text extraction |
+| `python-docx` | DOCX text extraction |
 
 ---
 
