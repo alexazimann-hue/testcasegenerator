@@ -9,19 +9,32 @@ import csv
 
 import streamlit as st
 
-# Cacher l'avatar créateur (lien vers GitHub)
-hide_creator_avatar = """
+hide_avatar = """
 <style>
+/* Cacher le conteneur du profil créateur */
+[class*="profileContainer"] {
+    display: none !important;
+    visibility: hidden !important;
+}
+
+/* Cacher le preview du profil */
+[class*="profilePreview"] {
+    display: none !important;
+    visibility: hidden !important;
+}
+
+/* Cacher l'image avatar */
 [data-testid="appCreatorAvatar"] {
     display: none !important;
 }
-/* Optionnel : cacher aussi toute la zone profil */
-[class*="profilePreview"] {
+
+/* Cacher le badge "Made with Streamlit" aussi */
+[class*="viewerBadge"] {
     display: none !important;
 }
 </style>
 """
-st.markdown(hide_creator_avatar, unsafe_allow_html=True)
+st.markdown(hide_avatar, unsafe_allow_html=True)
 
 # ── LLM ADAPTERS ──────────────────────────────────────────────────────────────
 
