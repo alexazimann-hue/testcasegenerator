@@ -1,6 +1,6 @@
 # 🧪 QAForge — AI Test Case Generator
 
-> **QAForge** is a Streamlit web application that automatically generates professional, structured QA test cases from a user story or feature description, using AI (Gemini or OpenAI).
+> **QAForge** is a web application that automatically generates professional, structured QA test cases from a user story or feature description, using AI (Gemini or OpenAI).
 
 ---
 
