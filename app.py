@@ -350,7 +350,7 @@ with st.sidebar:
         min_value=0.0, max_value=1.0,
         value=st.session_state.get("temperature", 0.2),
         step=0.05,
-        help="0 = reproductible (étude GHL/ISO 29119-4)  ·  0.2 = défaut équilibré  ·  >0.5 = créatif mais JSON moins stable"
+        help="0 = reproducible (GHL/ISO 29119-4 study)  ·  0.2 = balanced default  ·  >0.5 = creative but less stable JSON"
     )
     st.session_state.temperature = temperature
 
