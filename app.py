@@ -1,5 +1,7 @@
 import streamlit as st
 import time
+import base64
+import re
 from PIL import Image
 import io
 import docx
@@ -24,15 +26,27 @@ try{new MutationObserver(h).observe(window.parent.parent.document.body,{childLis
 
 # ── LLM ADAPTERS ──────────────────────────────────────────────────────────────
 
-def call_gemini(history, system_prompt, user_message, images=None, max_tokens=3000):
+@st.cache_resource
+def _get_gemini_client(key):
     from google import genai
+    return genai.Client(api_key=key)
+
+@st.cache_resource
+def _get_openai_client(key, url, provider):
+    from openai import OpenAI
+    if provider == "OpenRouter":
+        return OpenAI(api_key=key, base_url=url, timeout=60.0,
+            default_headers={
+                "HTTP-Referer": "https://testcasegenerator-draft.streamlit.app",
+                "X-Title": "QAForge"
+            })
+    return OpenAI(api_key=key, base_url=url, timeout=60.0) if url else OpenAI(api_key=key, timeout=60.0)
+
+
+def call_gemini(history, system_prompt, user_message, images=None, max_tokens=3000):
     from google.genai import types
 
-    @st.cache_resource
-    def get_gemini_client(key):
-        return genai.Client(api_key=key)
-
-    client = get_gemini_client(st.session_state.api_key)
+    client = _get_gemini_client(st.session_state.api_key)
     contents = []
     for m in history:
         role = "user" if m["role"] == "user" else "model"
@@ -55,19 +69,7 @@ def call_gemini(history, system_prompt, user_message, images=None, max_tokens=30
     return result.text
 
 def call_openai(history, system_prompt, user_message, images=None, max_tokens=3000, base_url=None):
-    from openai import OpenAI
-
-    @st.cache_resource
-    def get_openai_client(key, url, provider):
-        if provider == "OpenRouter":
-            return OpenAI(api_key=key, base_url=url,
-                default_headers={
-                    "HTTP-Referer": "https://testcasegenerator-draft.streamlit.app",
-                    "X-Title": "QAForge"
-                })
-        return OpenAI(api_key=key, base_url=url) if url else OpenAI(api_key=key)
-
-    client = get_openai_client(st.session_state.api_key, base_url, st.session_state.get("provider", "OpenAI"))
+    client = _get_openai_client(st.session_state.api_key, base_url, st.session_state.get("provider", "OpenAI"))
     messages = [{"role": "system", "content": system_prompt}]
     for m in history:
         messages.append({"role": m["role"], "content": m["content"]})
@@ -77,7 +79,6 @@ def call_openai(history, system_prompt, user_message, images=None, max_tokens=30
         content = [{"type": "text", "text": user_message}]
         for img in images:
             buf = io.BytesIO(); img.save(buf, format="PNG")
-            import base64
             b64 = base64.b64encode(buf.getvalue()).decode()
             content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
         messages.append({"role": "user", "content": content})
@@ -118,9 +119,13 @@ def call_llm_structured(system_prompt, user_message, max_tokens=8000):
     """Structured JSON output — uses native mode per provider, with fallback."""
     provider = st.session_state.provider
 
+    # FIX: helper to detect fatal errors that should not be silently swallowed
+    def _is_fatal(e):
+        msg = str(e)
+        return any(k in msg for k in ("401", "invalid_api_key", "API_KEY", "429", "RESOURCE_EXHAUSTED", "rate_limit"))
+
     if provider == "Gemini":
         try:
-            from google import genai
             from google.genai import types
             import typing_extensions as typing
 
@@ -142,11 +147,7 @@ def call_llm_structured(system_prompt, user_message, max_tokens=8000):
             class TestCaseList(typing.TypedDict):
                 test_cases: list[TestCase]
 
-            @st.cache_resource
-            def get_gemini_client(key):
-                return genai.Client(api_key=key)
-
-            client = get_gemini_client(st.session_state.api_key)
+            client = _get_gemini_client(st.session_state.api_key)
             contents = [types.Content(role="user", parts=[types.Part(text=user_message)])]
             config = types.GenerateContentConfig(
                 system_instruction=system_prompt,
@@ -159,18 +160,14 @@ def call_llm_structured(system_prompt, user_message, max_tokens=8000):
                 model=st.session_state.model_choice.strip(), contents=contents, config=config
             )
             return json.loads(result.text).get("test_cases", [])
-        except Exception:
+        except Exception as e:
+            if _is_fatal(e):
+                raise
             pass  # fall through to manual parsing
 
     elif provider == "OpenAI":
         try:
-            from openai import OpenAI
-
-            @st.cache_resource
-            def get_openai_client(key):
-                return OpenAI(api_key=key)
-
-            client = get_openai_client(st.session_state.api_key)
+            client = _get_openai_client(st.session_state.api_key, None, "OpenAI")
             result = client.chat.completions.create(
                 model=st.session_state.model_choice.strip(),
                 messages=[
@@ -185,7 +182,9 @@ def call_llm_structured(system_prompt, user_message, max_tokens=8000):
             if isinstance(parsed, list):
                 return parsed
             return parsed.get("test_cases", [])
-        except Exception:
+        except Exception as e:
+            if _is_fatal(e):
+                raise
             pass  # fall through to manual parsing
 
     # Universal fallback: ask for raw JSON, parse manually
@@ -234,12 +233,17 @@ def generate_test_cases_in_batches(system_prompt, plan_ctx, scenario_titles, bat
 
 
 def extract_scenario_titles(plan_text):
-    """Extract TC titles from Phase 2 plan (lines starting with '- TC:')."""
-    import re
+    """
+    Extract TC titles from Phase 2 plan.
+    FIX: handles '- TC: Title', '- Title', '* Title', and '1. Title' formats.
+    """
     titles = re.findall(r"-\s*TC:\s*(.+)", plan_text)
     if not titles:
-        # Fallback: any bullet line
-        titles = re.findall(r"^\s*[-•]\s*(.+)", plan_text, re.MULTILINE)
+        # Numbered list: '1. Title' or '1) Title'
+        titles = re.findall(r"^\s*\d+[.)]\s+(.+)", plan_text, re.MULTILINE)
+    if not titles:
+        # Bullet / dash list
+        titles = re.findall(r"^\s*[-*•]\s*(.+)", plan_text, re.MULTILINE)
     return [t.strip() for t in titles if t.strip()]
 
 
@@ -324,7 +328,7 @@ st.markdown("""
 
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.title("🧪 QAForge — AI Test Case Generator V.0.2")
+    st.title("🧪 QAForge — AI Test Case Generator V.0.3")
 
     provider = st.radio("LLM Provider", list(PROVIDER_DEFAULTS.keys()), horizontal=True)
     cfg = PROVIDER_DEFAULTS[provider]
@@ -353,8 +357,11 @@ with st.sidebar:
 """)
     st.divider()
     if st.button("🔄 New Session", use_container_width=True):
+        # FIX: preserve provider/api_key/model_choice so user doesn't re-enter API key
+        KEEP = {"provider", "api_key", "model_choice"}
         for k in list(st.session_state.keys()):
-            del st.session_state[k]
+            if k not in KEEP:
+                del st.session_state[k]
         st.rerun()
 
 # ── SESSION STATE ─────────────────────────────────────────────────────────────
@@ -366,6 +373,7 @@ defaults = {
     "structured_test_cases": None,
     "p1_questions": [], "p1_answers": {}, "p1_summary": "", "p1_user_story": "", "p1_raw_prompt": "", "p1_extra_ctx": "", "p1_chat_msgs": [],
     "p2_scenarios": [], "p2_summary": "", "p2_review": {},
+    "p3_full_md": "",
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -490,7 +498,11 @@ Very High | High | Medium | Low
 
 ## HARD CONSTRAINTS
 - Output ONLY valid JSON. No markdown fences, no preamble.
-- Minimum 12 scenarios.
+- Generate between 6 and 20 scenarios based on the actual complexity of the feature.
+  Simple features (1–2 flows): 6–9 scenarios.
+  Moderate features (3–5 flows, validation rules): 10–15 scenarios.
+  Complex features (multi-actor, payments, permissions, integrations): 15–20 scenarios.
+- Do NOT invent scenarios to reach a quota — every scenario must cover a real test need.
 - Assign realistic priorities based on business impact.
 """
 
@@ -773,8 +785,10 @@ def build_csv(data):
 # ── TAB BAR ───────────────────────────────────────────────────────────────────
 def render_tab_bar():
     pr, ap = st.session_state.phase_reached, st.session_state.active_phase
+    # FIX: create columns once before the loop to avoid nested columns bug
+    cols = st.columns(3)
     for i, (n, label) in enumerate({1:"Analysis", 2:"Test Plan", 3:"Test Cases"}.items()):
-        with st.columns(3)[i]:
+        with cols[i]:
             if n > pr:
                 st.button(f"🔒 Phase {n} — {label}", key=f"tab_{n}", disabled=True, use_container_width=True)
             else:
@@ -1304,7 +1318,10 @@ elif st.session_state.active_phase == 3:
             try:
                 response = call_llm(st.session_state.p3_msgs[:-1], PROMPT_P3_MARKDOWN, reply3, max_tokens=8000)
                 st.session_state.p3_msgs.append({"role":"assistant","content":response})
-                st.session_state.p3_full_md = response
+                # FIX: accumulate into p3_full_md instead of overwriting it
+                # so exports contain ALL test cases, not just the last reply
+                existing_md = st.session_state.get("p3_full_md", "")
+                st.session_state.p3_full_md = (existing_md + "\n\n" + response).strip() if existing_md else response
                 st.session_state.structured_test_cases = None
                 st.rerun()
             except Exception as e: handle_error(e)
