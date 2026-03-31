@@ -1,198 +1,195 @@
 # 🧪 QAForge — AI Test Case Generator
 
+># 🧪 QAForge — AI Test Case Generator
+
 > **QAForge** is a web application that automatically generates professional, structured QA test cases from a user story or feature description, using AI (Gemini or OpenAI).
+---
+
+## ✨ Features
+
+- **5 LLM providers**: Gemini, OpenAI, Groq, Mistral, OpenRouter
+- **Multi-file upload**: PDF (text + images), DOCX (paragraphs + tables + images), TXT, MD, direct images (max 5 files)
+- **Smart extraction**: PDF via PyMuPDF (positional order), DOCX with Markdown tables, `[IMAGE_N — file]` markers
+- **3 structured phases** with locked navigation and progress tracking
+- **Export**: Markdown · JSON · CSV
+- **Temperature slider**: 0.0 → 1.0 (default 0.2)
 
 ---
 
-## 🚀 Getting Started
+## 🗺️ The 3 Phases
 
-### Prerequisites
-- Python 3.9+
-- A Google AI Studio API key (Gemini) **or** an OpenAI API key
+### Phase 1 — Analysis & Questions
+The AI analyzes the User Story and:
+1. Identifies **applicable ISO 29119-4 techniques** (GHL Step 1): BVA, Equivalence Partitioning, Decision Table, State Transition, Error Guessing, Exploratory Testing, Function Combinations
+2. Generates **typed clarifying questions** (boolean / multiple_choice / text) grouped by category (Functional, Validation, Error Handling, Edge Cases, System Dependencies)
+3. Displays an analysis panel: business rules, actors, identified screens, ISO techniques
 
-### Installation
+### Phase 2 — Test Plan
+The AI generates a test plan per ISO technique (GHL-F method):
+- Each scenario is prefixed by its technique: `BVA —`, `DT —`, `ST —`, `EP —`, `FC —`, `EG —`
+- Per-scenario validation / rejection / priority adjustment
+- Batch generation (6 scenarios per batch) to avoid timeouts
+
+### Phase 3 — Full Test Cases
+The AI writes test cases with:
+- **Technique** field (ISO 29119-4 traceability)
+- Real test data in steps
+- Expected result in natural language (optimized for cosine semantic similarity ≥ 0.7)
+- MD / JSON / CSV export
+
+---
+
+## 🚀 Installation
+
+### Requirements
 
 ```bash
-pip install -r requirements.txt
-streamlit run app.py
+pip install streamlit google-generativeai openai pymupdf python-docx Pillow pypdf
 ```
 
-### Configuration
-On first launch, enter your API key in the sidebar. Choose between **Gemini** (recommended, free tier available) or **OpenAI**.
+### Run the app
 
----
-
-## 🗺️ How It Works — The 3-Phase Pipeline
-
-```
-Phase 1 — Analysis          Phase 2 — Review             Phase 3 — Generation
-────────────────────────    ─────────────────────────    ──────────────────────
-User story input        →   Interactive TC review    →   Full test cases
-Structured Q&A              Select / exclude TCs          Markdown display
-Click-based answers         Set priorities               JSON/CSV on demand
+```bash
+streamlit run app_v04.py
 ```
 
 ---
 
-## 🔍 Phase 1 — Requirements Analysis
+## ⚙️ Configuration
 
-The user pastes their **user story** (and optionally attaches files/screenshots). The AI analyzes the story and returns a **structured JSON** with:
-- A 2-3 sentence summary of the current understanding
-- A list of clarifying questions categorized and typed
+In the **sidebar**:
 
-### Question types displayed as interactive widgets:
-| Type | Widget |
-|------|--------|
-| `boolean` | `[✅ Yes]` `[❌ No]` buttons |
-| `multiple_choice` | `st.radio()` horizontal |
-| `text` | Short text input |
+| Parameter | Description |
+|---|---|
+| **LLM Provider** | Gemini · OpenAI · Groq · Mistral · OpenRouter |
+| **API Key** | API key for the selected provider |
+| **Model** | Exact model ID (e.g. `gemini-2.0-flash`, `gpt-4o-mini`) |
+| **🌡️ Temperature** | `0.0` = reproducible (GHL study) · `0.2` = balanced default · `>0.5` = creative but less stable JSON |
 
-### Question categories:
-`Functional` · `Validation` · `Error Handling` · `Edge Cases` · `System / Dependencies`
+### Recommended models
 
-The LLM autonomously decides how many questions to ask based on complexity — simple stories get 3-5 questions, complex ones up to 15. Every question must target a **real ambiguity**.
-
-Once all questions are answered, a single **"Submit Answers → Phase 2"** button sends the structured Q&A context to Phase 2.
+| Provider | Recommended model | Notes |
+|---|---|---|
+| Gemini | `gemini-2.0-flash` | Best quality/speed ratio, native vision |
+| OpenAI | `gpt-4o-mini` | Cost-efficient, reliable structured JSON |
+| Groq | `llama-3.3-70b-versatile` | Very fast, free tier available |
+| Mistral | `mistral-small-latest` | Good European alternative |
+| OpenRouter | `meta-llama/llama-3.3-70b-instruct:free` | Free |
 
 ---
 
-## 📋 Phase 2 — Test Plan Review
+## 🔬 GHL Methodology (ISO/IEC/IEEE 29119-4)
 
-The AI generates a test plan as scenario titles with metadata (category + priority). Each scenario is displayed as an **interactive row**:
+QAForge implements the **GHL (Generating High-Level test cases)** method described in:
+
+> Masuda et al., *"Generating High-Level Test Cases from Requirements using LLM: An Industry Study"*, arXiv:2510.03641, 2025.
+
+### Why GHL?
+
+| Method | Recall (Bluetooth) | Recall (Mozilla) |
+|---|---|---|
+| Zero-shot (baseline) | 0.65 | 0.02 |
+| GHL (Step 1 + Step 2) | 0.69 | 0.20 |
+| **GHL-F (+ Function Combinations)** | **0.84** | **0.37** |
+
+### The 2 key steps
+
+**Step 1** — The AI identifies applicable ISO 29119-4 test design techniques from the requirements *before* generating anything.
+
+**Step 2** — For each identified technique, the AI generates test cases specific to that technique, ensuring exhaustive coverage.
+
+### Supported techniques
+
+| Prefix | Technique | When to use |
+|---|---|---|
+| `BVA` | Boundary Value Analysis | Numeric fields, ranges, limits |
+| `DT` | Decision Table Testing | Multi-condition logic (IF x AND y THEN z) |
+| `ST` | State Transition Testing | Lifecycles, statuses (draft/active/archived) |
+| `EP` | Equivalence Partitioning | Valid/invalid input classes |
+| `FC` | Function Combinations (GHL-F) | Interactions between features/modules |
+| `EG` | Error Guessing | Likely failure points |
+| _(none)_ | Happy Path / Alternate Flow | Nominal user journeys |
+
+---
+
+## 📁 Supported file formats
+
+| Format | Text extraction | Image extraction | Notes |
+|---|---|---|---|
+| PDF | ✅ PyMuPDF | ✅ (positional order) | Fallback to pypdf if PyMuPDF unavailable · Scanned pages rasterized |
+| DOCX | ✅ paragraphs + tables | ✅ inline images | Tables converted to Markdown |
+| TXT / MD | ✅ | ❌ | Plain text |
+| PNG / JPG / WEBP | — | ✅ direct | Visual analysis (Gemini / OpenAI only) |
+
+> **Limits**: 5 files max · Images smaller than 50×50px filtered out (decorative icons ignored)
+
+---
+
+## 📤 Exports
+
+| Format | Content |
+|---|---|
+| **Markdown** | Formatted test cases with tables, numbered steps, expected results |
+| **JSON** | Structured array: `id`, `title`, `type`, `technique`, `priority`, `automation`, `preconditions`, `steps`, `expected_result`, `failure_signature` |
+| **CSV** | Excel / Google Sheets compatible |
+
+---
+
+## 🏗️ Architecture
 
 ```
-[✅] [❌]  ✅ Successful login with valid credentials   [🔴 Very High] [🟠 High] [🟡 Medium] [🟢 Low]
-[✅] [❌]  ❌ ~~Login with empty fields~~               [🔴 Very High] [🟠 High] [🟡 Medium] [🟢 Low]
+app_v04.py
+├── LLM Adapters          call_gemini / call_openai / call_llm (unified router)
+│                         call_llm_structured (native Gemini JSON + fallback)
+├── File Parsers          pdf_smart_extract / docx_smart_extract / extract_text_plain
+├── Generation helpers    generate_until_complete (anti-truncation [[GENERATION_COMPLETE]])
+│                         generate_test_cases_in_batches (batches of 6)
+├── Prompts               PROMPT_P1_QUESTIONS · PROMPT_P1_CHAT
+│                         PROMPT_P2 · PROMPT_P3_MARKDOWN · PROMPT_P3_JSON
+└── UI                    render_tab_bar / Phase 1 / Phase 2 / Phase 3
 ```
 
-- **✅ / ❌** — Include or exclude from Phase 3 generation (excluded titles are struck through)
-- **Priority buttons** — The LLM pre-selects a priority; user can override it
-- Excluded scenarios are **not sent to Phase 3**, saving API quota
-- A **chat input** at the bottom allows global plan modifications
+### Anti-truncation mechanism
 
-### Priority levels:
-`🔴 Very High` · `🟠 High` · `🟡 Medium` · `🟢 Low`
-
----
-
-## 📝 Phase 3 — Test Case Generation
-
-Only the selected scenarios from Phase 2 are sent for detailed generation. Each test case includes:
-- `ID` (TC-N), `Type`, `Priority`, `Automation` candidate flag
-- `Preconditions`, numbered `Test Steps`, `Expected Result`, `Failure Signature`
-
-### Auto-loop generation
-Uses `generate_until_complete()` — the LLM loops until it emits `[[GENERATION_COMPLETE]]`, guaranteeing all TCs are generated. A 2-second pause between iterations avoids RPM rate limiting.
-
-### Batch mode
-Plans with more than 6 scenarios are automatically split into batches of 6, with a progress bar displayed during generation.
-
-### Resuming truncated generation
-An expander **"⚠️ Generation incomplete?"** allows manual triggering of the auto-loop continuation.
+For long generations, QAForge uses a `[[GENERATION_COMPLETE]]` signal:
+- The AI emits this token when all test cases have been generated
+- If the token is absent, a "Continue..." iteration is triggered automatically (max 2 iterations)
+- An **"Auto-complete"** button is available if generation remains incomplete
 
 ---
 
-## 📤 Export Formats
+## 📝 Changelog
 
-| Format | How |
-|--------|-----|
-| **Markdown** | Direct download of the generated document |
-| **Text** | Plain text version |
-| **JSON** | Click **"⚙️ Generate JSON & CSV exports"** — structured from the Markdown (no extra TC generation) |
-| **CSV** | Same button — converted client-side from the JSON |
+### v0.4 (2026-03-31)
+- **GHL prompts**: `PROMPT_P1_QUESTIONS` identifies ISO 29119-4 techniques before asking questions (GHL Step 1)
+- **GHL-F prompts**: `PROMPT_P2` generates scenarios per technique with prefixes (`BVA —`, `DT —`, `ST —`, `EP —`, `FC —`, `EG —`)
+- **Technique field** in `PROMPT_P3_MARKDOWN` for ISO traceability and semantic similarity validation
+- **`iso_ctx`**: techniques extracted in Phase 1 are automatically injected into Phase 2 context
+- **🌡️ Temperature slider** in sidebar (0.0 → 1.0, default 0.2) propagated to all providers
+- **ISO panel**: "🔬 ISO 29119-4 techniques identified" expander in Phase 1
 
-> 💡 JSON/CSV are generated by passing the **already-produced Markdown** to the LLM for structuring — no re-generation of test cases, saving API quota.
+### v0.3
+- Multi-provider support: Groq, Mistral, OpenRouter added
+- Improved PDF extraction with positional order (PyMuPDF)
+- `generate_until_complete` mechanism + `[[GENERATION_COMPLETE]]` signal
+- Batch generation of 6 scenarios per call
 
----
-
-## ⚙️ Function Reference
-
-### LLM Providers
-
-#### `call_gemini(messages, system_prompt, user_message, images, max_tokens)`
-Calls the Google Gemini API. Accepts conversation history, system instruction, current user message, optional images (vision), and max tokens. Returns raw text.
-
-#### `call_openai(messages, system_prompt, user_message, images, max_tokens)`
-Calls the OpenAI API (GPT models). Same interface as `call_gemini`. Handles image encoding as base64 for vision calls.
-
-#### `call_llm(messages, system_prompt, user_message, images, max_tokens)`
-Router — dispatches to `call_gemini` or `call_openai` based on sidebar selection. Used by all phases.
-
-#### `call_llm_structured(system_prompt, user_message, max_tokens)`
-Calls the LLM with a JSON schema constraint. Used exclusively for JSON/CSV export — receives the final Markdown and returns a structured array of test case objects.
+### v0.2
+- PDF / DOCX support with image extraction
+- JSON + CSV export
+- Phase navigation with progressive locking
 
 ---
 
-### Generation Logic
+## ⚠️ Known limitations
 
-#### `generate_until_complete(system_prompt, history, initial_prompt, max_iterations, max_tokens)`
-Auto-loop function. Calls the LLM iteratively until `[[GENERATION_COMPLETE]]` is detected or `max_iterations` (default: 2) is reached. Adds a 2s pause between iterations to avoid RPM throttling. Returns merged Markdown + updated message history.
-
-#### `generate_test_cases_in_batches(system_prompt, plan_ctx, scenario_titles, batch_size)`
-Used for plans with more than 6 scenarios. Splits into batches of `batch_size` (default: 6), calls `generate_until_complete` per batch, shows a progress bar, and maintains continuous TC numbering across batches.
-
-#### `extract_scenario_titles(plan_text)`
-Parses Phase 2 plan text with regex to extract scenario titles. Used to decide between single-call and batch mode, and to build the list of titles sent to Phase 3.
+- **Groq, Mistral, OpenRouter** providers do not support image analysis — `[IMAGE_N]` markers remain in the text but are not visually analyzed
+- **Temperature** max is `1.0` (Groq and Mistral do not support values above 1.0)
+- Files larger than 15,000 characters after extraction are automatically truncated
+- `localStorage` is disabled in Streamlit Cloud iframes — session is lost on page reload
 
 ---
 
-### Utilities
+## 📄 License
 
-#### `extract_text(file)`
-Extracts text from uploaded files. Supports `.txt`, `.md`, `.pdf`, `.docx`. Returns empty string for unsupported formats.
-
-#### `is_image(file)`
-Returns `True` if the file extension is `png`, `jpg`, `jpeg`, or `webp`.
-
-#### `file_icon(filename)`
-Returns an emoji representing the file type (📕 PDF, 📘 DOCX, 📄 TXT, 🖼️ image).
-
-#### `handle_error(e)`
-Centralized error handler. Displays user-friendly `st.error()` messages for rate limits, auth failures, model-not-found, and generic errors.
-
-#### `build_csv(test_cases)`
-Converts structured test case objects from `call_llm_structured()` into a CSV string using Python's `csv` module.
-
-#### `render_chat(messages)`
-Renders a conversation history using `st.chat_message()` with role-based avatars (🧑‍💻 user / 🤖 assistant).
-
-#### `render_tab_bar(tabs, active_key)`
-Renders a horizontal tab bar using Streamlit buttons. Used in Phase 3 to switch between the Markdown view and individual TC detail panel.
-
----
-
-## 🔑 API Usage per Action
-
-| Action | API calls |
-|--------|-----------|
-| Phase 1 — questions generation | 1 call |
-| Phase 2 — test plan generation | 1 call |
-| Phase 3 — TC generation (≤6 selected) | 1–2 calls |
-| Phase 3 — TC generation (>6 selected) | 1–2 calls × N batches |
-| JSON/CSV export (on demand) | 1 call (structuring from Markdown) |
-
-> ⚠️ **Gemini free tier**: 5 RPM. If you hit the limit, wait 60 seconds before retrying. Phase 3 includes a 2-second pause between iterations to reduce throttling risk.
-
----
-
-## 🛠️ Tech Stack
-
-| Library | Usage |
-|---------|-------|
-| `streamlit` | Web UI framework |
-| `google-generativeai` | Gemini API client |
-| `openai` | OpenAI API client |
-| `pandas` | CSV data handling |
-| `Pillow` | Image file processing |
-| `pypdf` | PDF text extraction |
-| `python-docx` | DOCX text extraction |
-
----
-
-## 📁 Project Structure
-
-```
-app.py              # Main application (all logic + UI)
-requirements.txt    # Python dependencies
-README.md           # This file
-```
+MIT — free to use, modify, and distribute.
