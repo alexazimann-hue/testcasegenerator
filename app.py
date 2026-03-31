@@ -350,7 +350,7 @@ with st.sidebar:
         min_value=0.0, max_value=1.0,
         value=st.session_state.get("temperature", 0.2),
         step=0.05,
-        help="0 = reproducible (GHL/ISO 29119-4 study)  ·  0.2 = balanced default  ·  >0.5 = creative but less stable JSON"
+        help="0 = reproducible (ISO 29119-4)  ·  0.2 = balanced default  ·  >0.5 = creative but less stable JSON"
     )
     st.session_state.temperature = temperature
 
@@ -391,7 +391,7 @@ Analyze the provided User Story and:
 1. FIRST identify which ISO/IEC/IEEE 29119-4 test design techniques apply to these requirements.
 2. THEN generate clarifying questions to resolve ambiguities before test planning.
 
-## TECHNIQUE IDENTIFICATION (GHL Step 1)
+## TECHNIQUE IDENTIFICATION (ISO/IEC/IEEE 29119-4 — Step 1)
 Before writing any question, reason about the requirements and identify applicable techniques:
 - Boundary Value Analysis (BVA) → if numeric fields, ranges, limits, or thresholds exist
 - Equivalence Partitioning → if inputs can be grouped into valid/invalid classes
@@ -399,7 +399,7 @@ Before writing any question, reason about the requirements and identify applicab
 - State Transition Testing → if the feature has lifecycle states (draft/active/archived, open/closed)
 - Error Guessing → always applicable based on experience
 - Exploratory Testing → always applicable
-- Function Combinations (GHL-F) → if multiple independent features interact
+- Function Combinations → if multiple independent features interact
 
 ## QUESTION STRATEGY
 - Ask ONLY questions whose answer would meaningfully change the test strategy
@@ -469,14 +469,13 @@ Keep responses concise and professional.
 """
 
 PROMPT_P2 = """
-You are a Lead QA Engineer applying the GHL (Generating High-Level) method
-validated by industrial research (Masuda et al., 2025 — recall 0.84 on Bluetooth specs).
+You are a Lead QA Engineer specialising in test design using ISO/IEC/IEEE 29119-4 techniques.
 
 ## YOUR ROLE
-Generate a comprehensive TEST PLAN as scenario TITLES ONLY with metadata.
+Generate a comprehensive TEST CHECKLIST as scenario TITLES ONLY with metadata.
 FORBIDDEN: steps, preconditions, or expected results in this phase.
 
-## GHL COVERAGE — ISO/IEC/IEEE 29119-4 techniques
+## COVERAGE — ISO/IEC/IEEE 29119-4 techniques
 The ISO techniques identified in Phase 1 are provided in the context.
 For EACH applicable technique, generate dedicated scenarios:
 
@@ -486,7 +485,7 @@ For EACH applicable technique, generate dedicated scenarios:
 - **State Transition Testing** → each state, each valid/invalid transition
 - **Error Guessing** → likely failure points (empty inputs, nulls, concurrent access, special chars)
 - **Exploratory Testing** → at least 1 scenario covering unexpected user paths
-- **Function Combinations (GHL-F)** → interactions between identified features/modules
+- **Function Combinations** → interactions between identified features/modules
 
 ## SCENARIO TITLE FORMAT
 Prefix each title with its technique abbreviation:
@@ -525,7 +524,7 @@ Very High | High | Medium | Low
 
 PROMPT_P3_MARKDOWN = """
 You are a Senior QA Test Architect writing execution-ready test cases
-aligned with the GHL method (ISO/IEC/IEEE 29119-4 techniques).
+aligned with ISO/IEC/IEEE 29119-4 test design techniques.
 
 ## GUIDELINES
 - Use clear, natural language for each test case to maximise semantic clarity
@@ -606,10 +605,10 @@ HELP_TEXTS = {
     ),
 
     "phase2": (
-        "PHASE 2 — Test Plan (Scenario Titles)\n"
+        "PHASE 2 — Test Checklist (Scenario Titles)\n"
         "──────────────────────────────────────\n"
         "What happens here:\n"
-        "  • The AI generates scenario titles using the GHL-F method (ISO 29119-4)\n"
+        "  • The AI generates scenario titles using ISO/IEC/IEEE 29119-4 test design techniques\n"
         "  • Each scenario is prefixed by its technique:\n"
         "      BVA  — Boundary Value Analysis (min-1, min, max, max+1)\n"
         "      DT   — Decision Table (multi-condition logic combinations)\n"
@@ -623,7 +622,7 @@ HELP_TEXTS = {
         "\n"
         "Output: a prioritised list of scenarios passed to Phase 3\n"
         "\n"
-        "Note: GHL-F favours high recall (coverage) over precision — some overlap is normal."
+        "Note: ISO 29119-4 coverage techniques favour exhaustiveness — some overlap is normal."
     ),
 
     "phase3": (
@@ -901,7 +900,7 @@ def render_tab_bar():
     pr, ap = st.session_state.phase_reached, st.session_state.active_phase
     phase_meta = {
         1: ("Analysis",   HELP_TEXTS["phase1"],      HELP_TEXTS["phase1_locked"]),
-        2: ("Test Plan",  HELP_TEXTS["phase2"],      HELP_TEXTS["phase2_locked"]),
+        2: ("Test Checklist",  HELP_TEXTS["phase2"],      HELP_TEXTS["phase2_locked"]),
         3: ("Test Cases", HELP_TEXTS["phase3"],      HELP_TEXTS["phase2_locked"]),
     }
     cols = st.columns(3)
@@ -1233,7 +1232,7 @@ if st.session_state.active_phase == 1:
 #  PHASE 2
 # ═════════════════════════════════════════════════════════════════════════════
 elif st.session_state.active_phase == 2:
-    st.markdown('<div class="badge b2">📋 Phase 2 — Lead QA Engineer: Test Plan</div>', unsafe_allow_html=True)
+    st.markdown('<div class="badge b2">📋 Phase 2 — Lead QA Engineer: Test Checklist</div>', unsafe_allow_html=True)
 
     scenarios = st.session_state.get("p2_scenarios", [])
 
@@ -1253,7 +1252,7 @@ elif st.session_state.active_phase == 2:
             "Security": "🔒", "Non-Functional": "⚙️"
         }
 
-        st.markdown(f"📋 **{st.session_state.get('p2_summary', 'Test Plan')}**")
+        st.markdown(f"📋 **{st.session_state.get('p2_summary', 'Test Checklist')}**")
         st.divider()
 
         for s in scenarios:
