@@ -1,7 +1,5 @@
 import streamlit as st
 import time
-import base64
-import re
 from PIL import Image
 import io
 import docx
@@ -26,27 +24,15 @@ try{new MutationObserver(h).observe(window.parent.parent.document.body,{childLis
 
 # ── LLM ADAPTERS ──────────────────────────────────────────────────────────────
 
-@st.cache_resource
-def _get_gemini_client(key):
-    from google import genai
-    return genai.Client(api_key=key)
-
-@st.cache_resource
-def _get_openai_client(key, url, provider):
-    from openai import OpenAI
-    if provider == "OpenRouter":
-        return OpenAI(api_key=key, base_url=url, timeout=60.0,
-            default_headers={
-                "HTTP-Referer": "https://testcasegenerator-draft.streamlit.app",
-                "X-Title": "QAForge"
-            })
-    return OpenAI(api_key=key, base_url=url, timeout=60.0) if url else OpenAI(api_key=key, timeout=60.0)
-
-
 def call_gemini(history, system_prompt, user_message, images=None, max_tokens=3000):
+    from google import genai
     from google.genai import types
 
-    client = _get_gemini_client(st.session_state.api_key)
+    @st.cache_resource
+    def get_gemini_client(key):
+        return genai.Client(api_key=key)
+
+    client = get_gemini_client(st.session_state.api_key)
     contents = []
     for m in history:
         role = "user" if m["role"] == "user" else "model"
@@ -59,7 +45,7 @@ def call_gemini(history, system_prompt, user_message, images=None, max_tokens=30
     config = types.GenerateContentConfig(
         system_instruction=system_prompt,
         max_output_tokens=max_tokens,
-        temperature=0.2,
+        temperature=st.session_state.get("temperature", 0.2),
     )
     result = client.models.generate_content(
         model=st.session_state.model_choice.strip(), contents=contents, config=config
@@ -69,7 +55,19 @@ def call_gemini(history, system_prompt, user_message, images=None, max_tokens=30
     return result.text
 
 def call_openai(history, system_prompt, user_message, images=None, max_tokens=3000, base_url=None):
-    client = _get_openai_client(st.session_state.api_key, base_url, st.session_state.get("provider", "OpenAI"))
+    from openai import OpenAI
+
+    @st.cache_resource
+    def get_openai_client(key, url, provider):
+        if provider == "OpenRouter":
+            return OpenAI(api_key=key, base_url=url,
+                default_headers={
+                    "HTTP-Referer": "https://testcasegenerator-draft.streamlit.app",
+                    "X-Title": "QAForge"
+                })
+        return OpenAI(api_key=key, base_url=url) if url else OpenAI(api_key=key)
+
+    client = get_openai_client(st.session_state.api_key, base_url, st.session_state.get("provider", "OpenAI"))
     messages = [{"role": "system", "content": system_prompt}]
     for m in history:
         messages.append({"role": m["role"], "content": m["content"]})
@@ -79,6 +77,7 @@ def call_openai(history, system_prompt, user_message, images=None, max_tokens=30
         content = [{"type": "text", "text": user_message}]
         for img in images:
             buf = io.BytesIO(); img.save(buf, format="PNG")
+            import base64
             b64 = base64.b64encode(buf.getvalue()).decode()
             content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
         messages.append({"role": "user", "content": content})
@@ -89,7 +88,7 @@ def call_openai(history, system_prompt, user_message, images=None, max_tokens=30
         model=st.session_state.model_choice.strip(),
         messages=messages,
         max_tokens=max_tokens,
-        temperature=0.2,
+        temperature=st.session_state.get("temperature", 0.2),
     )
     text = result.choices[0].message.content
     if not text or not text.strip():
@@ -119,13 +118,9 @@ def call_llm_structured(system_prompt, user_message, max_tokens=8000):
     """Structured JSON output — uses native mode per provider, with fallback."""
     provider = st.session_state.provider
 
-    # FIX: helper to detect fatal errors that should not be silently swallowed
-    def _is_fatal(e):
-        msg = str(e)
-        return any(k in msg for k in ("401", "invalid_api_key", "API_KEY", "429", "RESOURCE_EXHAUSTED", "rate_limit"))
-
     if provider == "Gemini":
         try:
+            from google import genai
             from google.genai import types
             import typing_extensions as typing
 
@@ -147,12 +142,16 @@ def call_llm_structured(system_prompt, user_message, max_tokens=8000):
             class TestCaseList(typing.TypedDict):
                 test_cases: list[TestCase]
 
-            client = _get_gemini_client(st.session_state.api_key)
+            @st.cache_resource
+            def get_gemini_client(key):
+                return genai.Client(api_key=key)
+
+            client = get_gemini_client(st.session_state.api_key)
             contents = [types.Content(role="user", parts=[types.Part(text=user_message)])]
             config = types.GenerateContentConfig(
                 system_instruction=system_prompt,
                 max_output_tokens=max_tokens,
-                temperature=0.2,
+                temperature=st.session_state.get("temperature", 0.2),
                 response_mime_type="application/json",
                 response_schema=TestCaseList,
             )
@@ -160,14 +159,18 @@ def call_llm_structured(system_prompt, user_message, max_tokens=8000):
                 model=st.session_state.model_choice.strip(), contents=contents, config=config
             )
             return json.loads(result.text).get("test_cases", [])
-        except Exception as e:
-            if _is_fatal(e):
-                raise
+        except Exception:
             pass  # fall through to manual parsing
 
     elif provider == "OpenAI":
         try:
-            client = _get_openai_client(st.session_state.api_key, None, "OpenAI")
+            from openai import OpenAI
+
+            @st.cache_resource
+            def get_openai_client(key):
+                return OpenAI(api_key=key)
+
+            client = get_openai_client(st.session_state.api_key)
             result = client.chat.completions.create(
                 model=st.session_state.model_choice.strip(),
                 messages=[
@@ -175,16 +178,14 @@ def call_llm_structured(system_prompt, user_message, max_tokens=8000):
                     {"role": "user", "content": user_message},
                 ],
                 max_tokens=max_tokens,
-                temperature=0.2,
+                temperature=st.session_state.get("temperature", 0.2),
                 response_format={"type": "json_object"},
             )
             parsed = json.loads(result.choices[0].message.content)
             if isinstance(parsed, list):
                 return parsed
             return parsed.get("test_cases", [])
-        except Exception as e:
-            if _is_fatal(e):
-                raise
+        except Exception:
             pass  # fall through to manual parsing
 
     # Universal fallback: ask for raw JSON, parse manually
@@ -233,17 +234,12 @@ def generate_test_cases_in_batches(system_prompt, plan_ctx, scenario_titles, bat
 
 
 def extract_scenario_titles(plan_text):
-    """
-    Extract TC titles from Phase 2 plan.
-    FIX: handles '- TC: Title', '- Title', '* Title', and '1. Title' formats.
-    """
+    """Extract TC titles from Phase 2 plan (lines starting with '- TC:')."""
+    import re
     titles = re.findall(r"-\s*TC:\s*(.+)", plan_text)
     if not titles:
-        # Numbered list: '1. Title' or '1) Title'
-        titles = re.findall(r"^\s*\d+[.)]\s+(.+)", plan_text, re.MULTILINE)
-    if not titles:
-        # Bullet / dash list
-        titles = re.findall(r"^\s*[-*•]\s*(.+)", plan_text, re.MULTILINE)
+        # Fallback: any bullet line
+        titles = re.findall(r"^\s*[-•]\s*(.+)", plan_text, re.MULTILINE)
     return [t.strip() for t in titles if t.strip()]
 
 
@@ -328,7 +324,7 @@ st.markdown("""
 
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.title("🧪 QAForge — AI Test Case Generator V.0.3")
+    st.title("🧪 QAForge — AI Test Case Generator V.0.4")
 
     provider = st.radio("LLM Provider", list(PROVIDER_DEFAULTS.keys()), horizontal=True)
     cfg = PROVIDER_DEFAULTS[provider]
@@ -349,6 +345,16 @@ with st.sidebar:
     st.session_state.model_choice = model_choice
 
     st.divider()
+    temperature = st.slider(
+        "🌡️ Temperature",
+        min_value=0.0, max_value=1.0,
+        value=st.session_state.get("temperature", 0.2),
+        step=0.05,
+        help="0 = reproductible (étude GHL/ISO 29119-4)  ·  0.2 = défaut équilibré  ·  >0.5 = créatif mais JSON moins stable"
+    )
+    st.session_state.temperature = temperature
+
+    st.divider()
     st.markdown("""
 ### 🗺️ How it works
 1. **Phase 1** — Submit your User Story → AI asks questions → answer → validate
@@ -357,11 +363,8 @@ with st.sidebar:
 """)
     st.divider()
     if st.button("🔄 New Session", use_container_width=True):
-        # FIX: preserve provider/api_key/model_choice so user doesn't re-enter API key
-        KEEP = {"provider", "api_key", "model_choice"}
         for k in list(st.session_state.keys()):
-            if k not in KEEP:
-                del st.session_state[k]
+            del st.session_state[k]
         st.rerun()
 
 # ── SESSION STATE ─────────────────────────────────────────────────────────────
@@ -371,76 +374,81 @@ defaults = {
     "p1_validated": False, "p2_validated": False,
     "us_submitted": False, "p1_context": "", "p2_draft": "",
     "structured_test_cases": None,
-    "p1_questions": [], "p1_answers": {}, "p1_summary": "", "p1_user_story": "", "p1_raw_prompt": "", "p1_extra_ctx": "", "p1_chat_msgs": [],
-    "p2_scenarios": [], "p2_summary": "", "p2_review": {},
-    "p3_full_md": "",
+    "p1_questions": [], "p1_answers": {}, "p1_summary": "", "p1_user_story": "", "p1_raw_prompt": "", "p1_extra_ctx": "", "p1_iso_techniques": [], "p1_chat_msgs": [],
+    "temperature": 0.2, "p2_scenarios": [], "p2_summary": "", "p2_review": {},
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
 # ── PROMPTS ───────────────────────────────────────────────────────────────────
-PROMPT_P1_QUESTIONS = """You are a Senior QA Analyst and Requirements Engineer with 10+ years of experience.
+PROMPT_P1_QUESTIONS = """
+You are a Senior QA Analyst and Requirements Engineer with 10+ years of experience
+applying ISO/IEC/IEEE 29119 standards in industrial software testing projects.
 
 ## YOUR ROLE
-Analyze the provided User Story and generate clarifying questions to resolve ambiguities before test planning.
+Analyze the provided User Story and:
+1. FIRST identify which ISO/IEC/IEEE 29119-4 test design techniques apply to these requirements.
+2. THEN generate clarifying questions to resolve ambiguities before test planning.
+
+## TECHNIQUE IDENTIFICATION (GHL Step 1)
+Before writing any question, reason about the requirements and identify applicable techniques:
+- Boundary Value Analysis (BVA) → if numeric fields, ranges, limits, or thresholds exist
+- Equivalence Partitioning → if inputs can be grouped into valid/invalid classes
+- Decision Table Testing → if complex multi-condition logic (IF x AND y THEN z)
+- State Transition Testing → if the feature has lifecycle states (draft/active/archived, open/closed)
+- Error Guessing → always applicable based on experience
+- Exploratory Testing → always applicable
+- Function Combinations (GHL-F) → if multiple independent features interact
 
 ## QUESTION STRATEGY
 - Ask ONLY questions whose answer would meaningfully change the test strategy
-- Simple, unambiguous user stories → fewer questions (3–5)
-- Complex user stories (multi-step flows, payments, permissions, integrations) → more questions (up to 15)
+- Simple, unambiguous user stories: fewer questions (3–5)
+- Complex user stories (multi-step flows, payments, permissions, integrations): more questions (up to 15)
 - Every question must target a REAL ambiguity — never ask what is already stated
 - 1 question = 1 specific piece of missing information
 - Never combine two questions into one
 
 ## QUESTION TYPES
-Use the most appropriate type for each question:
 - "boolean" → yes/no questions (e.g. "Is this field mandatory?")
 - "multiple_choice" → when there are 2–5 known possible answers
 - "text" → when the answer is a free value (limit, rule, description)
 
 ## CATEGORIES
-Classify each question into one of:
-- Functional
-- Validation
-- Error Handling
-- Edge Cases
-- System / Dependencies
+- Functional | Validation | Error Handling | Edge Cases | System / Dependencies
 
 ## VISUAL ANALYSIS
 When [IMAGE_N — filename] markers appear in the document context:
-- Identify the type of visual: wireframe, UI screenshot, form mockup, flow diagram, table, error state
+- Identify the type of visual (wireframe, UI screenshot, form mockup, flow diagram, table, error state)
 - Extract ALL visible form fields and their apparent constraints (required, format, length)
 - Note navigation elements, buttons, links and the flows they imply
 - Identify visible validation rules, error messages, or status indicators
 - Treat every visual as a functional specification — it defines behaviour, not just appearance
 - If a visual contradicts or extends the written text, flag it in your questions
-- Reference visuals explicitly in your questions (e.g. "In the login screen shown in IMAGE_1...")
+- Reference visuals explicitly in your questions (e.g. "In the login screen shown in [IMAGE_1]...")
 
 ## OUTPUT FORMAT (STRICT JSON — no markdown, no explanation)
 {
   "summary": "2-3 sentence summary of your current understanding of the feature",
+  "applicable_iso_techniques": [
+    {"name": "Boundary Value Analysis", "rationale": "Password field has min/max character constraints"},
+    {"name": "Decision Table Testing", "rationale": "Login logic varies by role AND account status"}
+  ],
   "key_business_rules": ["rule extracted from text or visuals"],
   "actors": ["User", "Admin"],
-  "screens_identified": ["Login screen (IMAGE_1)", "Dashboard (IMAGE_2)"],
+  "screens_identified": ["Login screen — [IMAGE_1]", "Dashboard — [IMAGE_2]"],
   "questions": [
     {
-      "id": 1,
-      "category": "Functional",
-      "type": "boolean",
+      "id": 1, "category": "Functional", "type": "boolean",
       "question": "Is the user required to be logged in to access this feature?"
     },
     {
-      "id": 2,
-      "category": "Validation",
-      "type": "multiple_choice",
+      "id": 2, "category": "Validation", "type": "multiple_choice",
       "question": "Which email formats are accepted?",
       "options": ["All valid email formats", "Professional emails only", "Specific domain only"]
     },
     {
-      "id": 3,
-      "category": "Edge Cases",
-      "type": "text",
+      "id": 3, "category": "Edge Cases", "type": "text",
       "question": "What is the maximum character length allowed for this field?"
     }
   ]
@@ -451,6 +459,7 @@ HARD CONSTRAINTS:
 - Do NOT generate test cases, scenarios, or test plan content.
 - Do NOT invent business rules not present in the User Story or attached visuals.
 - If no visuals are present, leave screens_identified as an empty array.
+- Always include Error Guessing and Exploratory Testing in applicable_iso_techniques.
 """
 
 PROMPT_P1_CHAT = """You are a Senior QA Analyst reviewing answers to your clarifying questions.
@@ -459,70 +468,105 @@ If all critical questions are answered, confirm readiness to proceed to test pla
 Keep responses concise and professional.
 """
 
-PROMPT_P2 = """You are a Lead QA Engineer specializing in test design and coverage strategy.
+PROMPT_P2 = """
+You are a Lead QA Engineer applying the GHL (Generating High-Level) method
+validated by industrial research (Masuda et al., 2025 — recall 0.84 on Bluetooth specs).
 
 ## YOUR ROLE
 Generate a comprehensive TEST PLAN as scenario TITLES ONLY with metadata.
-FORBIDDEN: steps, preconditions, or expected results.
+FORBIDDEN: steps, preconditions, or expected results in this phase.
 
-## COVERAGE — apply ALL applicable techniques:
-- Happy Path, Alternate Flows
-- Equivalence Partitioning, Boundary Value Analysis (BVA)
-- Error Guessing, State Transitions, Negative Testing
-- Security / Non-Functional if applicable
+## GHL COVERAGE — ISO/IEC/IEEE 29119-4 techniques
+The ISO techniques identified in Phase 1 are provided in the context.
+For EACH applicable technique, generate dedicated scenarios:
+
+- **Equivalence Partitioning** → valid class, invalid class scenarios
+- **Boundary Value Analysis (BVA)** → min-1, min, max, max+1 for every constrained field
+- **Decision Table Testing** → one scenario per significant condition combination
+- **State Transition Testing** → each state, each valid/invalid transition
+- **Error Guessing** → likely failure points (empty inputs, nulls, concurrent access, special chars)
+- **Exploratory Testing** → at least 1 scenario covering unexpected user paths
+- **Function Combinations (GHL-F)** → interactions between identified features/modules
+
+## SCENARIO TITLE FORMAT
+Prefix each title with its technique abbreviation:
+- "BVA — Login with password at maximum length (128 chars)"
+- "DT — Admin user with expired account attempts login"
+- "ST — Password reset token transitions from valid to expired state"
+- "EP — Registration with invalid email format (missing @ symbol)"
+- "FC — Login followed immediately by password change in same session"
+- "EG — Submit form with all fields empty"
+- Happy Path and Alternate Flow titles: no prefix needed.
 
 ## OUTPUT FORMAT (STRICT JSON — no markdown, no explanation)
 {
-  "summary": "2-3 sentence feature summary",
+  "summary": "2-3 sentence feature summary highlighting testing strategy and ISO techniques applied",
   "scenarios": [
-    {
-      "id": 1,
-      "title": "Successful login with valid credentials",
-      "category": "Happy Path",
-      "priority": "Very High"
-    },
-    {
-      "id": 2,
-      "title": "Login with invalid password",
-      "category": "Negative",
-      "priority": "High"
-    }
+    {"id": 1, "title": "Successful login with valid credentials", "category": "Happy Path", "priority": "Very High"},
+    {"id": 2, "title": "BVA — Login with password exactly at minimum length (8 chars)", "category": "BVA", "priority": "High"},
+    {"id": 3, "title": "DT — Premium user with active subscription accesses restricted content", "category": "Decision Table", "priority": "Very High"}
   ]
 }
 
 ## CATEGORIES (use exactly these values):
-Happy Path | Alternate Flow | BVA | Equivalence | Negative | Edge Case | Security | Non-Functional
+Happy Path | Alternate Flow | BVA | Equivalence | Decision Table | State Transition | Negative | Edge Case | Security | Non-Functional | Function Combination | Error Guessing
 
 ## PRIORITIES (use exactly these values):
 Very High | High | Medium | Low
 
 ## HARD CONSTRAINTS
 - Output ONLY valid JSON. No markdown fences, no preamble.
-- Generate between 6 and 20 scenarios based on the actual complexity of the feature.
-  Simple features (1–2 flows): 6–9 scenarios.
-  Moderate features (3–5 flows, validation rules): 10–15 scenarios.
-  Complex features (multi-actor, payments, permissions, integrations): 15–20 scenarios.
+- Generate between 6 and 20 scenarios based on actual complexity.
+  Simple (1–2 flows): 6–9. Moderate (3–5 flows + validation): 10–15. Complex (multi-actor, payments, permissions): 15–20.
+- Apply ALL relevant ISO techniques — do NOT skip one to reduce count.
 - Do NOT invent scenarios to reach a quota — every scenario must cover a real test need.
 - Assign realistic priorities based on business impact.
 """
 
-PROMPT_P3_MARKDOWN = """You are a Senior QA Test Architect writing execution-ready test cases.
-Generate detailed human-readable test cases in Markdown format.
+PROMPT_P3_MARKDOWN = """
+You are a Senior QA Test Architect writing execution-ready test cases
+aligned with the GHL method (ISO/IEC/IEEE 29119-4 techniques).
 
-### TEST CASE [N]: [Scenario Title]
-| Field | Detail |
-|-------|--------|
-| **ID** | TC-[N] |
-| **Type** | [Happy Path / Alternate / BVA / Equivalence / Negative / Edge Case / Security] |
-| **Priority** | [Very High / High / Medium / Low] |
-| **Automation** | [✅ Good candidate / 🖐️ Manual only] — [reason] |
+## GUIDELINES
+- Use clear, natural language for each test case to maximise semantic clarity
+  (consistent terminology with the requirements → higher recall against reference tests)
+- Each test case must derive directly from the ISO technique assigned in Phase 2
+- Real test data in steps. If unclear: ⚠️ *Assumption: [...] — confirm with PO.*
+- For BVA: describe the exact boundary value being tested in the Expected Result
+- For Decision Table: state the exact combination of conditions being tested
 
-**📌 Preconditions:** - [state, role, data]
-**🔢 Test Steps:** 1. [action + exact data] 2. ...
-**✅ Expected Result:** [exact observable outcome]
-**🔴 Failure Signature:** [what tester sees on failure]
+## FORMAT — one block per test case, separated by ---
 
-HARD CONSTRAINTS: Real test data in steps. If unclear: ⚠️ *Assumption: [...] — confirm with PO.*"""
+---
+### TC-N — [Scenario Title from Phase 2]
+
+| Field              | Detail                                                              |
+|--------------------|---------------------------------------------------------------------|
+| **ID**             | TC-N                                                                |
+| **Technique**      | BVA / Decision Table / Equivalence / State Transition / Error Guessing / Function Combination / Happy Path / Alternate Flow |
+| **Type**           | Happy Path / Alternate / BVA / Equivalence / Decision Table / State Transition / Negative / Edge Case / Security |
+| **Priority**       | Very High / High / Medium / Low                                     |
+| **Automation**     | ✅ Good candidate / 🖐️ Manual only — (reason)                      |
+| **Preconditions**  | - state, role, data                                                 |
+
+**🔢 Test Steps**
+1. [action — exact data or boundary value]
+2. ...
+
+**✅ Expected Result**
+[exact observable outcome in natural language, using terminology from the requirements]
+
+**🔴 Failure Signature**
+[what the tester sees on failure]
+
+---
+
+HARD CONSTRAINTS:
+- Generate ALL test cases for every scenario in the validated plan. Do not skip any.
+- Use terminology strictly consistent with the requirements document.
+- Never truncate — emit [[GENERATION_COMPLETE]] when ALL test cases are written.
+- Do NOT add commentary, summaries, or preambles between test cases.
+"""
 
 PROMPT_P3_JSON = """You are a Senior QA Test Architect.
 Your task is to convert the provided Markdown test cases into a structured JSON array.
@@ -785,10 +829,8 @@ def build_csv(data):
 # ── TAB BAR ───────────────────────────────────────────────────────────────────
 def render_tab_bar():
     pr, ap = st.session_state.phase_reached, st.session_state.active_phase
-    # FIX: create columns once before the loop to avoid nested columns bug
-    cols = st.columns(3)
     for i, (n, label) in enumerate({1:"Analysis", 2:"Test Plan", 3:"Test Cases"}.items()):
-        with cols[i]:
+        with st.columns(3)[i]:
             if n > pr:
                 st.button(f"🔒 Phase {n} — {label}", key=f"tab_{n}", disabled=True, use_container_width=True)
             else:
@@ -915,6 +957,7 @@ if st.session_state.active_phase == 1:
                         st.session_state.p1_business_rules = parsed.get("key_business_rules", [])
                         st.session_state.p1_actors = parsed.get("actors", [])
                         st.session_state.p1_screens = parsed.get("screens_identified", [])
+                        st.session_state.p1_iso_techniques = parsed.get("applicable_iso_techniques", [])
                         st.session_state.p1_answers = {}
                         st.session_state.p1_raw_prompt = prompt
                         st.session_state.p1_user_story = us_input
@@ -945,6 +988,12 @@ if st.session_state.active_phase == 1:
                 if screens:
                     st.markdown("**🖥️ Screens identified**")
                     for s in screens: st.markdown(f"- {s}")
+            # ISO techniques display
+            iso_techs = st.session_state.get("p1_iso_techniques", [])
+            if iso_techs:
+                with st.expander("🔬 ISO 29119-4 techniques identified", expanded=False):
+                    for t in iso_techs:
+                        st.markdown(f"- **{t['name']}** — {t.get('rationale', '')}")
 
         st.markdown("### 🔍 Clarifying Questions")
         st.caption("Answer the questions below — click or type as appropriate.")
@@ -1067,11 +1116,16 @@ if st.session_state.active_phase == 1:
                 screens_ctx = "\nScreens identified:\n" + "\n".join(
                     f"- {s}" for s in st.session_state.p1_screens
                 )
+            iso_ctx = ""
+            if st.session_state.get("p1_iso_techniques"):
+                iso_ctx = "\nISO/IEC/IEEE 29119-4 techniques to apply:\n" + "\n".join(
+                    f"- {t['name']}: {t.get('rationale', '')}" for t in st.session_state.p1_iso_techniques
+                )
 
             ctx = (
                 f"User Story:\n{st.session_state.p1_user_story}\n\n"
                 f"Requirements Analysis Summary:\n{st.session_state.p1_summary}"
-                f"{rules_ctx}{screens_ctx}\n\n"
+                f"{rules_ctx}{screens_ctx}{iso_ctx}\n\n"
                 f"Clarification Q&A:\n{answers_text}\n\n"
                 f"Generate the test plan (titles only)."
             )
@@ -1318,10 +1372,7 @@ elif st.session_state.active_phase == 3:
             try:
                 response = call_llm(st.session_state.p3_msgs[:-1], PROMPT_P3_MARKDOWN, reply3, max_tokens=8000)
                 st.session_state.p3_msgs.append({"role":"assistant","content":response})
-                # FIX: accumulate into p3_full_md instead of overwriting it
-                # so exports contain ALL test cases, not just the last reply
-                existing_md = st.session_state.get("p3_full_md", "")
-                st.session_state.p3_full_md = (existing_md + "\n\n" + response).strip() if existing_md else response
+                st.session_state.p3_full_md = response
                 st.session_state.structured_test_cases = None
                 st.rerun()
             except Exception as e: handle_error(e)
