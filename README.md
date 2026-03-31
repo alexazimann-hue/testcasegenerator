@@ -1,14 +1,7 @@
 
 ># 🧪 QAForge — AI Test Case Generator
-
-> **QAForge** is a web application that automatically generates professional, structured QA test cases from a user story or feature description, using AI (Gemini or OpenAI).
----
-# 🧪 QAForge — AI Test Case Generator
-
-**Version 0.5** · Powered by ISO/IEC/IEEE 29119-4
-
-QAForge is an AI-driven test case generator built on **ISO/IEC/IEEE 29119-4 test design techniques**. It transforms a User Story into structured, execution-ready test cases in 3 phases — no RAG required.
-
+**Version 0.5** 
+> **QAForge** is a web application that automatically generates professional, structured QA test cases from a user story or feature description, using AI.
 ---
 
 ## ✨ Features
